@@ -1,0 +1,8 @@
+# Não enviar dados/artefatos/caches para o contexto do build (deixa o build rápido)
+data/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
