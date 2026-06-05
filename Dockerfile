@@ -19,9 +19,18 @@ RUN apt-get update && \
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir Cython numpy
 
-# Instala as dependências do projeto (copiamos só o requirements.txt para o build)
+# Copia o requirements.txt para o build
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# O xclib (pyxclib) precisa do Cython para compilar, mas não o declara como
+# dependência de build. Por isso instalamos ele SEPARADO e com --no-build-isolation,
+# para que ele use o Cython/numpy já instalados acima.
+RUN pip install --no-cache-dir --no-build-isolation \
+    "git+https://github.com/kunaldahiya/pyxclib.git"
+
+# Instala o restante das dependências (sem as linhas do xclib, já instalado acima)
+RUN grep -v -i 'xclib' /tmp/requirements.txt > /tmp/req-rest.txt && \
+    pip install --no-cache-dir -r /tmp/req-rest.txt
 
 # Baixa os recursos do NLTK exigidos pelo retriv (tokenização / stopwords)
 # em um caminho global, para já virem prontos dentro da imagem.
