@@ -52,6 +52,7 @@ class SparseConfig:
     cutoff: int = 100          # nº de vizinhos (docs de treino) recuperados por query
     num_labels: int = 64       # nº de rótulos mantidos POR classe (cabeça/cauda)
     query_batch_size: int = 128  # queries por lote no bsearch (limita a memória; ver retrieve)
+    max_query_terms: int = 20000  # trunca a query a N tokens; ver retrieve (evita segfault do retriv)
     aggregation: str = "max"   # paper (xCoRetriev/RAG-Fuse): "maior valor de relevância" = CombMAX. "sum" (CombSUM) é variante.
     head_frac: float = 0.20    # 20% rótulos mais frequentes = cabeça (Pareto)
     bm25_k1: float = 1.5
@@ -131,18 +132,44 @@ def retrieve(
     """Recupera vizinhos e agrega seus rótulos em scores, por classe (cabeça/cauda).
 
     Retorna {qid: [(coluna_rótulo, score), ...]} com até num_labels*2 candidatos.
+
+    Truncamento de query: documentos muito longos usados como query estouram a
+    pilha do retriv. O retriv NÃO deduplica os termos da query — monta um array
+    de postings por token — e `union_sorted_multi` (numba) é recursiva com
+    profundidade ≈ nº de termos / 2. Um doc do Eurlex com ~28 mil tokens gera
+    recursão de profundidade ~14 mil → estouro da pilha nativa → segfault. Por
+    isso truncamos cada query aos primeiros `max_query_terms` tokens. (O texto é
+    re-tokenizado pelo retriv; o corte por espaço só limita o tamanho.)
+
+    Teto medido (Eurlex-4K, container Brev): 20 mil tokens rodam; o doc inteiro
+    (~28 mil) estoura. O cap de 20 mil preserva praticamente todos os docs e só
+    apara os outliers extremos. Reduza se rodar em ambiente com pilha menor.
     """
     batch = max(1, cfg.query_batch_size)
+    limit = max(1, cfg.max_query_terms)
+    n_truncated = 0
     runs: dict[str, list[tuple[int, float]]] = {}
+
+    def _query_text(i: int) -> str:
+        nonlocal n_truncated
+        toks = test_texts[i].split()
+        if len(toks) > limit:
+            n_truncated += 1
+            return " ".join(toks[:limit])
+        return test_texts[i]
+
     for start in range(0, len(test_texts), batch):
         queries = [
-            {"id": str(i), "text": test_texts[i]}
+            {"id": str(i), "text": _query_text(i)}
             for i in range(start, min(start + batch, len(test_texts)))
         ]
         results = sr.bsearch(queries=queries, cutoff=cfg.cutoff)  # {qid: {docid: score}}
 
         for qid, neighbors in results.items():
             runs[qid] = _aggregate_neighbors(neighbors, train_label_cols, head, tail, cfg)
+
+    if n_truncated:
+        print(f"queries truncadas a {limit} tokens: {n_truncated}/{len(test_texts)}")
     return runs
 
 
