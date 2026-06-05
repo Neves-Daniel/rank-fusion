@@ -40,5 +40,8 @@ RUN grep -v -i 'xclib' /tmp/requirements.txt > /tmp/req-rest.txt && \
 # em um caminho global, para já virem prontos dentro da imagem.
 RUN python -m nltk.downloader -d /usr/share/nltk_data punkt punkt_tab stopwords
 
+# Ferramenta de testes (dev) — para rodar `python -m pytest` dentro do container
+RUN pip install --no-cache-dir pytest
+
 # Pasta de trabalho padrão (será espelhada pela montagem -v em tempo de execução)
 WORKDIR /workspace
