@@ -5,7 +5,9 @@ Abordagem: kNN léxico ("documentos parecidos têm rótulos parecidos").
   2. Para cada documento de TESTE (query), recupera os top-`cutoff` vizinhos
      de treino, cada um com sua nota BM25.
   3. Cada vizinho "vota" nos seus próprios rótulos-gold, com peso = nota BM25.
-     O score de um rótulo é a SOMA (ou MÁX) das notas dos vizinhos que o têm.
+     O score de um rótulo é o MÁX (default, fiel ao paper) das notas dos vizinhos
+     que o têm — xCoRetriev/RAG-Fuse: "pontuação igual ao maior valor de relevância
+     entre t e cada texto recuperado". SOMA (CombSUM) fica como variante experimental.
   4. Split cabeça/cauda (Pareto): mantém os top-`num_labels` rótulos de cabeça
      E os top-`num_labels` de cauda (ex.: 64 + 64 = 128 candidatos). É o que dá
      voz à cauda — o "Dynamic Two-Stage" do xCoRetriev.
@@ -50,7 +52,7 @@ class SparseConfig:
     cutoff: int = 100          # nº de vizinhos (docs de treino) recuperados por query
     num_labels: int = 64       # nº de rótulos mantidos POR classe (cabeça/cauda)
     query_batch_size: int = 128  # queries por lote no bsearch (limita a memória; ver retrieve)
-    aggregation: str = "sum"   # "sum" (CombSUM) ou "max" (CombMAX)
+    aggregation: str = "max"   # paper (xCoRetriev/RAG-Fuse): "maior valor de relevância" = CombMAX. "sum" (CombSUM) é variante.
     head_frac: float = 0.20    # 20% rótulos mais frequentes = cabeça (Pareto)
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
