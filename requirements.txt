@@ -1,0 +1,24 @@
+# Download
+gdown>=5.0.0
+
+# Recuperação esparsa (BM25) — metodologia xCoRetriev / RAG-Fuse
+retriv>=0.2.3            # BM25 + tokenização; traz ranx, torch e transformers junto
+# IMPORTANTE: após instalar, baixe os recursos do NLTK exigidos pelo retriv:
+#   python -m nltk.downloader punkt punkt_tab stopwords
+# (bm25s foi descartado: usamos retriv para fidelidade ao código do autor.)
+
+# Recuperação densa — estágio posterior, metodologia ainda a definir (ver TECH_STACK.md)
+sentence-transformers>=3.0.0   # provisório; não fixado até a metodologia do denso
+faiss-cpu>=1.7.2               # ou faiss-gpu se houver GPU
+
+# Fusão / normalização / métricas clássicas
+ranx>=0.3.20            # (já vem como dependência do retriv)
+
+# Métricas de XMTC (PSP@k / PSnDCG@k)
+# O repo se chama pyxclib, mas o pacote Python instalado é "xclib".
+xclib @ git+https://github.com/kunaldahiya/pyxclib.git
+
+# Utilitários
+numpy
+scipy
+tqdm

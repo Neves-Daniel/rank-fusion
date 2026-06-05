@@ -1,0 +1,14 @@
+# Não poluir o contexto da IA com dados, binários e artefatos.
+data/
+*.npz
+*.npy
+*.trec
+*.dat
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.faiss
+*.index
+notebooks/*.ipynb_checkpoints/
+.DS_Store

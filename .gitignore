@@ -1,0 +1,22 @@
+# Dados e artefatos — regeneráveis, não versionar (ver scripts/download_eurlex.sh)
+data/
+*.npz
+*.npy
+*.trec
+*.dat
+*.faiss
+*.index
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Configuração local do Claude Code (permissões da máquina)
+.claude/settings.local.json
+
+# Caches de ferramentas
+.pytest_cache/
+notebooks/*.ipynb_checkpoints/
+.DS_Store

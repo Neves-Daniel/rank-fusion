@@ -1,0 +1,114 @@
+"""Carregamento dos datasets XMTC no formato PECOS / X-Transformer.
+
+Espelho usado: HuggingFace thekop79/EURLex-4K (ver scripts/download_eurlex.sh).
+Layout esperado em <raw_dir>:
+  trn_X.txt / tst_X.txt : um documento por linha (texto pré-processado)
+  Y.trn.npz / Y.tst.npz : matriz esparsa CSR (n_docs x n_labels), valores binários
+  Y.txt                 : vocabulário de rótulos, um por linha (linha i = coluna i de Y)
+
+Os rótulos de cada documento são as colunas não-nulas da sua linha em Y, mapeadas
+para a string correspondente em Y.txt. Usamos sempre o ID textual do rótulo
+(não o índice de coluna) para que os rankings sejam comparáveis entre datasets.
+
+Uso:
+    from src.data import load_dataset, dataset_stats
+    ds = load_dataset("data/eurlex4k/raw")
+    print(dataset_stats(ds))
+    ds.train.texts[0], ds.train.labels[0]   # texto e lista de rótulos do doc 0
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+import scipy.sparse as sp
+
+
+@dataclass
+class Split:
+    texts: list[str]
+    labels: list[list[str]]          # IDs textuais de rótulo por documento
+    name: str = ""
+
+    def __len__(self) -> int:
+        return len(self.texts)
+
+
+@dataclass
+class Dataset:
+    train: Split
+    test: Split
+    label_vocab: list[str]           # linha i = rótulo da coluna i em Y
+
+
+def _read_lines(path: str) -> list[str]:
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Arquivo não encontrado: {path}\nRode antes: bash scripts/download_eurlex.sh"
+        )
+    with open(path, encoding="utf-8") as fh:
+        return [line.rstrip("\n") for line in fh]
+
+
+def _labels_from_matrix(Y: sp.spmatrix, vocab: list[str]) -> list[list[str]]:
+    """Para cada linha (documento), lista os IDs de rótulo das colunas não-nulas."""
+    Ycsr = Y.tocsr()
+    if Ycsr.shape[1] != len(vocab):
+        raise ValueError(
+            f"Y tem {Ycsr.shape[1]} colunas mas Y.txt tem {len(vocab)} rótulos."
+        )
+    out: list[list[str]] = []
+    indptr, indices = Ycsr.indptr, Ycsr.indices
+    for i in range(Ycsr.shape[0]):
+        cols = indices[indptr[i]:indptr[i + 1]]
+        out.append([vocab[c] for c in cols])
+    return out
+
+
+def load_dataset(raw_dir: str) -> Dataset:
+    vocab = _read_lines(os.path.join(raw_dir, "Y.txt"))
+
+    trn_texts = _read_lines(os.path.join(raw_dir, "trn_X.txt"))
+    tst_texts = _read_lines(os.path.join(raw_dir, "tst_X.txt"))
+
+    Ytrn = sp.load_npz(os.path.join(raw_dir, "Y.trn.npz"))
+    Ytst = sp.load_npz(os.path.join(raw_dir, "Y.tst.npz"))
+
+    if Ytrn.shape[0] != len(trn_texts):
+        raise ValueError(f"treino: {len(trn_texts)} textos vs {Ytrn.shape[0]} linhas em Y.trn")
+    if Ytst.shape[0] != len(tst_texts):
+        raise ValueError(f"teste: {len(tst_texts)} textos vs {Ytst.shape[0]} linhas em Y.tst")
+
+    train = Split(trn_texts, _labels_from_matrix(Ytrn, vocab), "train")
+    test = Split(tst_texts, _labels_from_matrix(Ytst, vocab), "test")
+    return Dataset(train=train, test=test, label_vocab=vocab)
+
+
+def dataset_stats(ds: Dataset) -> dict:
+    n_per_doc = [len(l) for l in ds.train.labels]
+    # rótulos efetivamente usados (treino+teste)
+    used = set()
+    for sp_ in (ds.train, ds.test):
+        for labs in sp_.labels:
+            used.update(labs)
+    return {
+        "n_train": len(ds.train),
+        "n_test": len(ds.test),
+        "n_labels_vocab": len(ds.label_vocab),
+        "n_labels_used": len(used),
+        "avg_labels_per_doc": round(sum(n_per_doc) / max(len(n_per_doc), 1), 3),
+        "max_labels_per_doc": max(n_per_doc, default=0),
+    }
+
+
+if __name__ == "__main__":
+    import sys
+
+    raw = sys.argv[1] if len(sys.argv) > 1 else "data/eurlex4k/raw"
+    ds = load_dataset(raw)
+    print(f"Diretório: {raw}")
+    for k, v in dataset_stats(ds).items():
+        print(f"  {k:22s}: {v}")
+    print("\nExemplo (treino[0]):")
+    print("  texto :", ds.train.texts[0][:140], "...")
+    print("  labels:", ds.train.labels[0][:10])
