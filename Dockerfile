@@ -15,9 +15,13 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends git build-essential && \
     rm -rf /var/lib/apt/lists/*
 
-# Atualiza o pip e instala Cython + numpy ANTES (o xclib precisa deles para compilar)
+# Atualiza o pip e instala as ferramentas de build que o xclib e suas dependências
+# precisam para compilar sem isolamento:
+#   - Cython: exigido pelo próprio xclib (pyxclib)
+#   - pybind11: exigido pelo fasttext (dependência do xclib)
+#   - numpy: usado na compilação de extensões
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir Cython numpy
+    pip install --no-cache-dir Cython numpy pybind11
 
 # Copia o requirements.txt para o build
 COPY requirements.txt /tmp/requirements.txt
