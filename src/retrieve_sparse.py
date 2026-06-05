@@ -52,7 +52,7 @@ class SparseConfig:
     cutoff: int = 100          # nº de vizinhos (docs de treino) recuperados por query
     num_labels: int = 64       # nº de rótulos mantidos POR classe (cabeça/cauda)
     query_batch_size: int = 128  # queries por lote no bsearch (limita a memória; ver retrieve)
-    max_query_terms: int = 20000  # trunca a query a N tokens; ver retrieve (evita segfault do retriv)
+    dedup_query_terms: bool = True  # deduplica tokens da query; ver retrieve (evita segfault do retriv)
     aggregation: str = "max"   # paper (xCoRetriev/RAG-Fuse): "maior valor de relevância" = CombMAX. "sum" (CombSUM) é variante.
     head_frac: float = 0.20    # 20% rótulos mais frequentes = cabeça (Pareto)
     bm25_k1: float = 1.5
@@ -133,30 +133,32 @@ def retrieve(
 
     Retorna {qid: [(coluna_rótulo, score), ...]} com até num_labels*2 candidatos.
 
-    Truncamento de query: documentos muito longos usados como query estouram a
-    pilha do retriv. O retriv NÃO deduplica os termos da query — monta um array
-    de postings por token — e `union_sorted_multi` (numba) é recursiva com
-    profundidade ≈ nº de termos / 2. Um doc do Eurlex com ~28 mil tokens gera
-    recursão de profundidade ~14 mil → estouro da pilha nativa → segfault. Por
-    isso truncamos cada query aos primeiros `max_query_terms` tokens. (O texto é
-    re-tokenizado pelo retriv; o corte por espaço só limita o tamanho.)
+    Dedup de query (evita segfault do retriv): documentos longos usados como
+    query estouram a pilha do retriv. O retriv NÃO deduplica os termos da query
+    — monta um array de postings por token — e `union_sorted_multi` (numba) é
+    recursiva com profundidade ≈ nº de termos / 2. Um doc do Eurlex com ~28 mil
+    tokens gera recursão de ~14 mil níveis → estouro da pilha nativa → segfault.
+    Pior: o kernel roda numa worker thread do numba, cuja pilha é pequena (teto
+    medido ~5 mil termos), e isso não se contorna por env var nem batch size.
 
-    Teto medido (Eurlex-4K, container Brev): 20 mil tokens rodam; o doc inteiro
-    (~28 mil) estoura. O cap de 20 mil preserva praticamente todos os docs e só
-    apara os outliers extremos. Reduza se rodar em ambiente com pilha menor.
+    Por isso deduplicamos os tokens (preservando a ordem) antes de buscar: o
+    comprimento da lista cai para o nº de termos DISTINTOS (q31: 28.301 → 1.842,
+    bem abaixo do teto). Preserva todo o vocabulário do documento; só remove o
+    peso por repetição do termo na query (query-TF) — escolha de pesos binários,
+    defensável para este kNN de rótulos.
     """
     batch = max(1, cfg.query_batch_size)
-    limit = max(1, cfg.max_query_terms)
-    n_truncated = 0
+    max_terms = 0
     runs: dict[str, list[tuple[int, float]]] = {}
 
     def _query_text(i: int) -> str:
-        nonlocal n_truncated
+        nonlocal max_terms
         toks = test_texts[i].split()
-        if len(toks) > limit:
-            n_truncated += 1
-            return " ".join(toks[:limit])
-        return test_texts[i]
+        if cfg.dedup_query_terms:
+            seen: set[str] = set()
+            toks = [t for t in toks if not (t in seen or seen.add(t))]
+        max_terms = max(max_terms, len(toks))
+        return " ".join(toks)
 
     for start in range(0, len(test_texts), batch):
         queries = [
@@ -168,8 +170,8 @@ def retrieve(
         for qid, neighbors in results.items():
             runs[qid] = _aggregate_neighbors(neighbors, train_label_cols, head, tail, cfg)
 
-    if n_truncated:
-        print(f"queries truncadas a {limit} tokens: {n_truncated}/{len(test_texts)}")
+    if cfg.dedup_query_terms:
+        print(f"dedup de termos na query: maior query = {max_terms} termos distintos")
     return runs
 
 
