@@ -9,7 +9,7 @@ retriv>=0.2.3            # BM25 + tokenização; traz ranx, torch e transformers
 
 # Recuperação densa — estágio posterior, metodologia ainda a definir (ver TECH_STACK.md)
 sentence-transformers>=3.0.0   # provisório; não fixado até a metodologia do denso
-faiss-cpu>=1.7.2               # ou faiss-gpu se houver GPU
+faiss-cpu>=1.7.2,<1.9          # <1.9: versões mais novas exigem numpy 2.x (ver nota no numpy)
 
 # Fusão / normalização / métricas clássicas
 ranx>=0.3.20            # (já vem como dependência do retriv)
@@ -19,6 +19,8 @@ ranx>=0.3.20            # (já vem como dependência do retriv)
 xclib @ git+https://github.com/kunaldahiya/pyxclib.git
 
 # Utilitários
-numpy
+# numpy fixado em 1.x: o xclib é compilado contra o ABI do numpy 1.26 e o
+# faiss-cpu<1.9 também espera numpy 1.x. Subir para 2.x quebraria os dois.
+numpy<2
 scipy
 tqdm
