@@ -23,16 +23,21 @@ NÃO há treino aqui: BM25 é estatístico. (Treino só apareceria no recuperado
 com fine-tuning, que está fora da v1.)
 
 Uso:
-    python src/retrieve_sparse.py            # roda no Eurlex-4K, gera runs/sparse.trec
+    python -m src.retrieve_sparse           # roda no Eurlex-4K, gera runs/sparse.trec
+    python src/retrieve_sparse.py           # idem, a partir da raiz do projeto
 """
 from __future__ import annotations
 
 import heapq
 import os
+import sys
 from dataclasses import dataclass
 
 import numpy as np
 import scipy.sparse as sp
+
+if __package__ in {None, ""}:
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data import load_dataset
 
@@ -41,8 +46,10 @@ from src.data import load_dataset
 class SparseConfig:
     raw_dir: str = "data/eurlex4k/raw"
     out_path: str = "data/eurlex4k/runs/sparse.trec"
+    retriv_base_path: str = "data/.retriv"
     cutoff: int = 100          # nº de vizinhos (docs de treino) recuperados por query
     num_labels: int = 64       # nº de rótulos mantidos POR classe (cabeça/cauda)
+    query_batch_size: int = 128  # queries por lote no bsearch (limita a memória; ver retrieve)
     aggregation: str = "sum"   # "sum" (CombSUM) ou "max" (CombMAX)
     head_frac: float = 0.20    # 20% rótulos mais frequentes = cabeça (Pareto)
     bm25_k1: float = 1.5
@@ -82,7 +89,9 @@ def head_tail_split(
 
 def build_index(train_texts: list[str], cfg: SparseConfig):
     """Indexa os documentos de treino com BM25 (retriv), replicando o RAG-Fuse."""
-    from retriv import SparseRetriever
+    from retriv import SparseRetriever, set_base_path
+
+    set_base_path(cfg.retriv_base_path)
 
     index_name = "xmtc_sparse"
     try:
@@ -121,28 +130,44 @@ def retrieve(
 
     Retorna {qid: [(coluna_rótulo, score), ...]} com até num_labels*2 candidatos.
     """
-    queries = [{"id": str(i), "text": t} for i, t in enumerate(test_texts)]
-    results = sr.bsearch(queries=queries, cutoff=cfg.cutoff)  # {qid: {docid: score}}
-
+    batch = max(1, cfg.query_batch_size)
     runs: dict[str, list[tuple[int, float]]] = {}
-    for qid, neighbors in results.items():
-        head_scores: dict[int, float] = {}
-        tail_scores: dict[int, float] = {}
-        for doc_id, score in neighbors.items():
-            for c in train_label_cols[int(doc_id)]:
-                bucket = head_scores if c in head else tail_scores
-                if cfg.aggregation == "sum":
-                    bucket[c] = bucket.get(c, 0.0) + score
-                elif cfg.aggregation == "max":
-                    if score > bucket.get(c, float("-inf")):
-                        bucket[c] = score
-                else:
-                    raise ValueError("aggregation deve ser 'sum' ou 'max'.")
+    for start in range(0, len(test_texts), batch):
+        queries = [
+            {"id": str(i), "text": test_texts[i]}
+            for i in range(start, min(start + batch, len(test_texts)))
+        ]
+        results = sr.bsearch(queries=queries, cutoff=cfg.cutoff)  # {qid: {docid: score}}
 
-        top_head = heapq.nlargest(cfg.num_labels, head_scores.items(), key=lambda kv: kv[1])
-        top_tail = heapq.nlargest(cfg.num_labels, tail_scores.items(), key=lambda kv: kv[1])
-        runs[qid] = top_head + top_tail
+        for qid, neighbors in results.items():
+            runs[qid] = _aggregate_neighbors(neighbors, train_label_cols, head, tail, cfg)
     return runs
+
+
+def _aggregate_neighbors(
+    neighbors: dict[str, float],
+    train_label_cols: list[list[int]],
+    head: set[int],
+    tail: set[int],
+    cfg: SparseConfig,
+) -> list[tuple[int, float]]:
+    """Agrega os rótulos dos vizinhos recuperados para uma query."""
+    head_scores: dict[int, float] = {}
+    tail_scores: dict[int, float] = {}
+    for doc_id, score in neighbors.items():
+        for c in train_label_cols[int(doc_id)]:
+            bucket = head_scores if c in head else tail_scores
+            if cfg.aggregation == "sum":
+                bucket[c] = bucket.get(c, 0.0) + score
+            elif cfg.aggregation == "max":
+                if score > bucket.get(c, float("-inf")):
+                    bucket[c] = score
+            else:
+                raise ValueError("aggregation deve ser 'sum' ou 'max'.")
+
+    top_head = heapq.nlargest(cfg.num_labels, head_scores.items(), key=lambda kv: kv[1])
+    top_tail = heapq.nlargest(cfg.num_labels, tail_scores.items(), key=lambda kv: kv[1])
+    return top_head + top_tail
 
 
 def write_trec(runs: dict[str, list[tuple[int, float]]], out_path: str, tag: str) -> None:
