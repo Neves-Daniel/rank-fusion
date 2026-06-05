@@ -11,8 +11,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Dependências de sistema:
 #   - git: necessário para instalar o xclib (pyxclib) direto do GitHub
 #   - build-essential: o xclib compila extensões em C/Cython
+#   - curl: usado por scripts/download_eurlex.sh para baixar o dataset
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git build-essential && \
+    apt-get install -y --no-install-recommends git build-essential curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Atualiza o pip e instala as ferramentas de build que o xclib e suas dependências
