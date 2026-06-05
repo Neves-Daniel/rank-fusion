@@ -30,6 +30,12 @@ rank-fusion/
      top-`cutoff` vizinhos e agrega (`sum`/`max`) os rótulos-gold deles ponderados
      pelo score BM25. Split cabeça/cauda (Pareto) → `num_labels` por classe
      (64+64=128 no artigo). Sem treino: BM25 é estatístico.
+     - *Dedup de query (obrigatório):* os termos da query são deduplicados antes
+       da busca. Docs longos da EUR-Lex (até ~59k tokens, ex. o Código Aduaneiro)
+       estouravam a pilha do kernel numba do retriv (lista de postings não
+       deduplicada → recursão/aliasing → segfault). Dedup resolve; custo: pesos
+       de query binários (ignora a frequência do termo na query). Os docs são
+       legítimos — não é defeito de dados.
    - **Denso:** metodologia ainda a definir.
 3. **fusion.py** combina os runs (normalização + algoritmo de fusão) → run fundido.
 4. **metrics.py** avalia qualquer run contra o gold (qrels derivado dos rótulos

@@ -21,6 +21,11 @@ O TECH_STACK original previa `bm25s`. Trocamos por **retriv** para replicar fiel
 o `SparseRetriever` do RAG-Fuse (celsofranssa/RAG-Fuse): mesma tokenização
 (word/stemmer/stopwords + normalizações) e BM25 com k1=1.5, b=0.75.
 
+**Gotcha do retriv (resolvido):** queries muito longas (docs grandes da EUR-Lex)
+estouram a pilha do kernel numba do retriv (segfault no `bsearch`). Não há env
+var nem batch size que contorne — roda em worker thread de pilha pequena. Solução:
+deduplicar os termos da query (`dedup_query_terms`, em `retrieve_sparse.py`).
+
 ## A instalar
 - pyxclib (git: kunaldahiya/pyxclib)   (métricas XMTC: PSP@k, PSnDCG@k)
 - tqdm
