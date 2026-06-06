@@ -22,21 +22,24 @@ fundir os dois rankings reforça acertos e reduz ruído — útil justamente na 
   recuperador denso ainda NÃO está definida.
 
 ## Artigos-base
-1. **xCoRetriev — França et al., SIGIR 2025.** "Optimizing Tail-Head Trade-off for
+1. **⭐ REFERÊNCIA PRINCIPAL — França, Rabbi, Salles, Cunha, Rocha & Gonçalves, 2025
+   (arXiv 2507.03761).** "Ranking-based Fusion Algorithms for Extreme Multi-label
+   Text Classification (XMTC)." É o artigo que define o nosso estudo: 6 estratégias
+   de normalização × 10 algoritmos de fusão sobre rankings esparso+denso, avaliados
+   por P@k/nDCG@k segmentados cabeça/cauda em 5-fold CV nos 4 datasets. Melhor
+   combinação relatada = **CombMNZ + ZMUV**. Protocolo, métricas, datasets e baseline
+   do projeto saem daqui (ver Tabelas 1–2 para Eurlex-4K).
+2. **xCoRetriev — França et al., SIGIR 2025.** "Optimizing Tail-Head Trade-off for
    XMTC with RAG-Labels and a Dynamic Two-Stage Retrieval and Fusion Pipeline."
-   Reformula XMTC como recuperação em duas etapas (esparso + denso) com fusão
-   dinâmica; usa RAG-labels para qualidade/ruído. Ganhos de até 48% em métricas
-   propensity-scored. É o pipeline de referência do projeto.
-2. **França et al., 2025 (arXiv 2507.03761).** "Ranking-based Fusion Algorithms for
-   XMTC." Aprofunda o estágio de fusão: estuda normalizações (incl. ZMUV) e
-   algoritmos de fusão; melhor combinação relatada = **CombMNZ + ZMUV**. É a base
-   metodológica direta do nosso estudo.
+   Contexto/pipeline mais amplo (duas etapas esparso+denso com fusão dinâmica +
+   RAG-labels; ganhos de até 48% em métricas propensity-scored). De onde vem o
+   recuperador esparso (kNN léxico) e o split 64+64 cabeça/cauda.
 3. **França et al., SBBD 2025.** "Muitas Classes Desbalanceadas? Não Classifique –
    Ranqueie! ... RAG-labels para Classificação Textual Multi-classe." **Origem do
    conceito de RAG-labels** (descrições de classe enriquecidas por LLM). Contexto
    multi-classe; no nosso projeto RAG-labels é stretch, fora da v1.
 
-Todos do mesmo grupo (UFMG/UFSJ): França, Salles, Cunha, Rocha, Gonçalves (+ outros).
+Todos do mesmo grupo (UFMG/UFSJ): França, Rabbi, Salles, Cunha, Rocha, Gonçalves.
 
 ## Glossário rápido
 - **XMTC:** Extreme Multi-Label Text Classification.
@@ -53,10 +56,10 @@ Todos do mesmo grupo (UFMG/UFSJ): França, Salles, Cunha, Rocha, Gonçalves (+ o
 Eurlex-4K (validação inicial, já baixado) → Wiki10-31K → AmazonCat-13K → Amazon-670K.
 
 ## Links das referências
+- **⭐ Ranking-based Fusion (arXiv 2025) — PRINCIPAL:** https://arxiv.org/abs/2507.03761 —
+  HTML aberto: https://arxiv.org/html/2507.03761
 - **xCoRetriev (SIGIR 2025):** DOI 10.1145/3726302.3730052 —
   https://dl.acm.org/doi/10.1145/3726302.3730052  (texto completo atrás de paywall ACM)
-- **Ranking-based Fusion (arXiv 2025):** https://arxiv.org/abs/2507.03761 —
-  HTML aberto: https://arxiv.org/html/2507.03761
 - **RAG-labels (SBBD 2025):** https://sol.sbc.org.br/index.php/sbbd/article/view/37243
 
 ## Acesso rápido (dados e ferramentas)
@@ -76,11 +79,18 @@ Eurlex-4K (validação inicial, já baixado) → Wiki10-31K → AmazonCat-13K �
   `~/.claude/projects/-home-dnpin-nlp-rank-fusion/memory/` (índice em `MEMORY.md`).
 
 ## Estado atual (atualizar conforme avança)
-- ✅ Dados do Eurlex-4K baixados e validados (15.449 treino / 3.865 teste / 3.956 rótulos).
+- ✅ Dados do Eurlex-4K baixados e validados (15.449 treino / 3.865 teste / 3.956 rótulos;
+  N=19.314 agrupado, bate com a Tabela 1 do artigo).
 - ✅ Arquivos-âncora criados; metodologia do recuperador denso ainda em aberto.
 - ✅ **Recuperador esparso implementado e validado** (`src/retrieve_sparse.py`): kNN léxico
   via retriv (BM25 k1=1.5/b=0.75), agregação de vizinhos + split cabeça/cauda → run TREC.
   Sanidade no Eurlex: query 0 recuperou 3/5 rótulos-gold no top-10. Decisões: chave de
   rótulo = `label_{coluna}`; sem filtro `text_cls` (artefato multi-classe do RAG-Fuse).
-- ⬜ Recuperador denso, fusão, métricas (PSP@k) e grid search: a fazer.
-- ⏳ Falta rodar o esparso completo (3.865 queries, cutoff=100) e gerar `runs/sparse.trec`.
+- ✅ **Splits de 5-fold CV implementados** (`src/splits.py`): protocolo oficial fiel ao
+  artigo (CV sobre dataset agrupado, cabeça/cauda global). `run_cv` gera 1 run por fold.
+  Validado: 24 testes leves verdes + folds reais (~3.863 queries/fold; cauda = 80%).
+- ⬜ Recuperador denso, fusão, métricas e grid search: a fazer.
+  - Métricas escolhidas: P@k/nDCG@k **segmentados cabeça/cauda** (p/ bater com Tabela 2) +
+    PSP@k/PSnDCG@k como extensão do projeto. O artigo NÃO usa PSP.
+- ⏳ Falta rodar o esparso completo na Brev (`python -m src.retrieve_sparse`, 5 folds) →
+  `runs/sparse.fold{0..4}.trec`.

@@ -9,6 +9,7 @@ rank-fusion/
 │  └─ download_eurlex.sh
 ├─ src/
 │  ├─ data.py            # carregar datasets (formato PECOS) -> Dataset/Split
+│  ├─ splits.py          # 5-fold CV sobre dataset agrupado (treino+teste)      (feito)
 │  ├─ retrieve_sparse.py # recuperador esparso (BM25 kNN, retriv) -> run TREC   (feito)
 │  ├─ retrieve_dense.py  # recuperador denso (metodologia a definir) -> run TREC (a fazer)
 │  ├─ fusion.py          # wrappers ranx + CombMNZ/RRF próprios (a fazer)
@@ -21,10 +22,21 @@ rank-fusion/
 └─ notebooks/      # análise exploratória
 ```
 
+## Protocolo de avaliação: 5-fold CV (fiel ao artigo)
+A avaliação é **5-fold cross-validation sobre o dataset AGRUPADO** (treino+teste),
+não o split fixo do PECOS — é o que o artigo-base (França et al. 2025) usa
+("averaged across the five test splits"). `splits.py` junta os N docs na ordem
+global `[treino, teste]`, gera k folds seeded (reprodutíveis) e expõe, por fold,
+o corpus (4/5) e as queries (1/5). Cabeça/cauda (Pareto 80/20) é **global** —
+frequências sobre os N docs, como o artigo define `T` —, não por fold. A seed dos
+folds do artigo é desconhecida: reproduzimos a METODOLOGIA, não os índices exatos.
+
 ## Fluxo do pipeline (estágios desacoplados por arquivos)
 1. **data.py** lê `raw/` → objetos em memória (texto + rótulos por doc).
-2. **retrieve_sparse.py / retrieve_dense.py** geram, para cada doc de teste, um
-   ranking de rótulos. Saída = `runs/{sparse,dense}.trec`.
+   **splits.py** agrupa treino+teste e gera os folds de CV.
+2. **retrieve_sparse.py / retrieve_dense.py** geram, para cada doc de teste (query)
+   de cada fold, um ranking de rótulos. Saída = `runs/{sparse,dense}.fold{f}.trec`,
+   onde `qid` = índice GLOBAL do doc agrupado (o gold é `label_cols[qid]`).
    - **Esparso (definido):** kNN léxico, à la xCoRetriev/RAG-Fuse. Indexa os docs de
      TREINO com BM25 (retriv, k1=1.5, b=0.75); para cada doc de teste recupera os
      top-`cutoff` vizinhos e agrega (`sum`/`max`) os rótulos-gold deles ponderados
@@ -37,9 +49,9 @@ rank-fusion/
        de query binários (ignora a frequência do termo na query). Os docs são
        legítimos — não é defeito de dados.
    - **Denso:** metodologia ainda a definir.
-3. **fusion.py** combina os runs (normalização + algoritmo de fusão) → run fundido.
-4. **metrics.py** avalia qualquer run contra o gold (qrels derivado dos rótulos
-   de teste). Sempre inclui métricas de cauda.
+3. **fusion.py** combina os runs (normalização + algoritmo de fusão), por fold → run fundido.
+4. **metrics.py** avalia cada run contra o gold (qrels = `label_cols[qid]`), por fold;
+   reporta média ± desvio dos folds. Sempre inclui métricas de cauda.
 5. **gridsearch.py** varre o produto (fusão × normalização) reusando os runs base
    já salvos — fusão é offline e barata.
 

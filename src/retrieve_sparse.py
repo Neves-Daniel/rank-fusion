@@ -42,12 +42,15 @@ if __package__ in {None, ""}:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data import load_dataset
+from src.splits import load_pooled, make_folds
 
 
 @dataclass
 class SparseConfig:
     raw_dir: str = "data/eurlex4k/raw"
-    out_path: str = "data/eurlex4k/runs/sparse.trec"
+    out_path: str = "data/eurlex4k/runs/sparse.trec"   # usado pelo modo single-split (legado/demo)
+    runs_dir: str = "data/eurlex4k/runs"               # modo CV: 1 run por fold aqui
+    out_template: str = "sparse.fold{fold}.trec"       # nome do run de cada fold
     retriv_base_path: str = "data/.retriv"
     cutoff: int = 100          # nº de vizinhos (docs de treino) recuperados por query
     num_labels: int = 64       # nº de rótulos mantidos POR classe (cabeça/cauda)
@@ -55,9 +58,14 @@ class SparseConfig:
     dedup_query_terms: bool = True  # deduplica tokens da query; ver retrieve (evita segfault do retriv)
     aggregation: str = "max"   # paper (xCoRetriev/RAG-Fuse): "maior valor de relevância" = CombMAX. "sum" (CombSUM) é variante.
     head_frac: float = 0.20    # 20% rótulos mais frequentes = cabeça (Pareto)
+    n_folds: int = 5           # k da validação cruzada (artigo: 5-fold CV)
+    seed: int = 42             # semente da atribuição de folds (reprodutibilidade)
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
     tag: str = "bm25"
+
+    def fold_out_path(self, fold_id: int) -> str:
+        return os.path.join(self.runs_dir, self.out_template.format(fold=fold_id))
 
 
 def _train_label_columns(raw_dir: str) -> tuple[list[list[int]], int]:
@@ -128,10 +136,15 @@ def retrieve(
     head: set[int],
     tail: set[int],
     cfg: SparseConfig,
+    query_ids: list[str] | None = None,
 ) -> dict[str, list[tuple[int, float]]]:
     """Recupera vizinhos e agrega seus rótulos em scores, por classe (cabeça/cauda).
 
     Retorna {qid: [(coluna_rótulo, score), ...]} com até num_labels*2 candidatos.
+
+    `query_ids` é o rótulo de cada query no run (qid). No modo CV é o índice GLOBAL
+    do doc agrupado, para o gold ser recuperável depois por esse mesmo índice. Se
+    omitido, usa a posição local `str(i)` (compatível com o modo single-split/demo).
 
     Dedup de query (evita segfault do retriv): documentos longos usados como
     query estouram a pilha do retriv. O retriv NÃO deduplica os termos da query
@@ -150,6 +163,8 @@ def retrieve(
     batch = max(1, cfg.query_batch_size)
     max_terms = 0
     runs: dict[str, list[tuple[int, float]]] = {}
+    if query_ids is None:
+        query_ids = [str(i) for i in range(len(test_texts))]
 
     def _query_text(i: int) -> str:
         nonlocal max_terms
@@ -162,7 +177,7 @@ def retrieve(
 
     for start in range(0, len(test_texts), batch):
         queries = [
-            {"id": str(i), "text": _query_text(i)}
+            {"id": query_ids[i], "text": _query_text(i)}
             for i in range(start, min(start + batch, len(test_texts)))
         ]
         results = sr.bsearch(queries=queries, cutoff=cfg.cutoff)  # {qid: {docid: score}}
@@ -211,7 +226,12 @@ def write_trec(runs: dict[str, list[tuple[int, float]]], out_path: str, tag: str
                 fh.write(f"{qid} Q0 label_{col} {rank} {score:.6f} {tag}\n")
 
 
-def main(cfg: SparseConfig | None = None) -> None:
+def run_single_split(cfg: SparseConfig | None = None) -> None:
+    """Modo legado: split fixo treino/teste do PECOS → 1 run em cfg.out_path.
+
+    Mantido para inspeção rápida; o protocolo oficial do projeto é 5-fold CV
+    (run_cv), fiel ao artigo. Ver src/splits.py.
+    """
     cfg = cfg or SparseConfig()
     ds = load_dataset(cfg.raw_dir)
     train_cols, n_labels = _train_label_columns(cfg.raw_dir)
@@ -224,6 +244,42 @@ def main(cfg: SparseConfig | None = None) -> None:
     runs = retrieve(sr, ds.test.texts, train_cols, head, tail, cfg)
     write_trec(runs, cfg.out_path, cfg.tag)
     print(f"run TREC salvo em {cfg.out_path} ({len(runs)} queries)")
+
+
+def run_cv(cfg: SparseConfig | None = None) -> None:
+    """Protocolo oficial: 5-fold CV sobre o dataset agrupado (treino+teste).
+
+    Para cada fold, indexa o corpus (4/5 dos docs) com BM25, usa o 1/5 restante
+    como queries e escreve um run TREC por fold (qid = índice GLOBAL do doc, ver
+    src/splits.py). A partição cabeça/cauda é GLOBAL (frequências sobre os N docs
+    agrupados), fiel à definição do artigo.
+    """
+    cfg = cfg or SparseConfig()
+    pooled = load_pooled(cfg.raw_dir)
+
+    head, tail = head_tail_split(pooled.label_cols, pooled.n_labels, cfg.head_frac)
+    print(f"agrupado: {len(pooled)} docs | rótulos: {pooled.n_labels} "
+          f"| cabeça: {len(head)} | cauda: {len(tail)} (global, Pareto) "
+          f"| agregação: {cfg.aggregation} | cutoff: {cfg.cutoff} | {cfg.n_folds}-fold (seed={cfg.seed})")
+
+    folds = make_folds(len(pooled), k=cfg.n_folds, seed=cfg.seed)
+    for fold in folds:
+        corpus_texts = [pooled.texts[i] for i in fold.train_idx]
+        corpus_cols = [pooled.label_cols[i] for i in fold.train_idx]
+        query_texts = [pooled.texts[i] for i in fold.test_idx]
+        query_ids = [str(int(i)) for i in fold.test_idx]   # índice GLOBAL agrupado
+
+        print(f"\n── fold {fold.fold_id}: corpus {len(corpus_texts)} | queries {len(query_texts)} ──")
+        sr = build_index(corpus_texts, cfg)
+        runs = retrieve(sr, query_texts, corpus_cols, head, tail, cfg, query_ids=query_ids)
+
+        out_path = cfg.fold_out_path(fold.fold_id)
+        write_trec(runs, out_path, cfg.tag)
+        print(f"run TREC salvo em {out_path} ({len(runs)} queries)")
+
+
+def main(cfg: SparseConfig | None = None) -> None:
+    run_cv(cfg)
 
 
 if __name__ == "__main__":

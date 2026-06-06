@@ -10,6 +10,11 @@ Estudar quais combinações de **algoritmos de fusão de rankings × estratégia
 normalização** melhoram a recuperação de **tail labels** em XMTC sem prejudicar
 head labels.
 
+**Referência principal:** França, Rabbi, Salles, Cunha, Rocha & Gonçalves (2025),
+"Ranking-based Fusion Algorithms for XMTC", arXiv 2507.03761. Define protocolo
+(5-fold CV), métricas (P@k/nDCG@k segmentados cabeça/cauda), datasets e baseline
+(melhor: CombMNZ+ZMUV). Demais artigos e links em CONTEXT.md → "Artigos-base".
+
 ## Guardrails de Design (Regras de Ouro)
 - **Métricas de cauda são obrigatórias.** Nunca reportar só Precision@k/Recall@k
   (dominadas pela cabeça). Sempre incluir **PSP@k / PSnDCG@k** e/ou split

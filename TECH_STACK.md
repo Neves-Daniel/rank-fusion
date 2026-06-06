@@ -34,5 +34,12 @@ deduplicar os termos da query (`dedup_query_terms`, em `retrieve_sparse.py`).
 Modelo, biblioteca de embedding e mecanismo de busca serão escolhidos quando a
 metodologia do recuperador denso for decidida. Nada de denso instalado/fixado ainda.
 
+**Decisão sobre o texto (2026-06-06):** o denso usa o MESMO texto stemizado do
+esparso. Verificamos que todos os espelhos do EURLex-4K (thekop79, PECOS/xmc-base,
+AttentionXML) trazem o texto stemizado/sem-stopwords — não há versão de palavras
+inteiras com o mesmo split/rótulos. É fiel ao baseline (xCoRetriev/França usam essa
+base do AttentionXML); a degradação de embeddings fica como ameaça à validade. Ver
+REQUIREMENTS.md → "Casos de borda".
+
 ## Não usar
 - Frameworks de classificação XMTC end-to-end (AttentionXML, LightXML) — o foco é fusão de rankings, não treinar classificador.

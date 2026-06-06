@@ -5,8 +5,13 @@ Em XMTC, quais combinações entre **algoritmos de fusão de rankings** e
 **estratégias de normalização** produzem os melhores resultados na recuperação de
 **tail labels**, sem comprometer o desempenho em head labels?
 
+## Protocolo de avaliação
+**5-fold cross-validation sobre o dataset agrupado** (treino+teste), fiel ao
+artigo-base (não o split fixo do PECOS). Folds seeded/reprodutíveis em `splits.py`;
+cabeça/cauda definida globalmente (Pareto 80/20). Ver ARCHITECTURE.md.
+
 ## Fluxo principal
-1. Carregar dataset (texto + rótulos por documento).
+1. Carregar dataset (texto + rótulos por documento) e gerar os folds de CV.
 2. Gerar dois rankings base de rótulos por doc de teste:
    - esparso (BM25),
    - denso (metodologia a definir).
@@ -19,6 +24,8 @@ Em XMTC, quais combinações entre **algoritmos de fusão de rankings** e
 - Globais: Precision@k, nDCG@k, Recall@k (k ∈ {1,5,10}).
 - **Cauda (obrigatórias): PSP@k e PSnDCG@k** (propensity-scored) e análise por
   split cabeça/cauda (Pareto: 80% dos rótulos menos frequentes = cauda).
+- Nota: o artigo-base reporta P@k/nDCG@k **segmentados cabeça/cauda** (não PSP) —
+  implementar esses para comparar com as tabelas dele; PSP é extensão nossa.
 - Eficiência: custo computacional da fusão (tempo).
 - Robustez: estabilidade das combinações entre datasets e sob ruído.
 
@@ -29,8 +36,17 @@ Em XMTC, quais combinações entre **algoritmos de fusão de rankings** e
 4. Amazon-670K — stretch (maior risco de prazo/compute).
 
 ## Casos de borda / decisões fixas
-- Texto stemizado do espelho atual pode degradar recuperadores densos → registrar
-  como ameaça à validade; não invalida o estudo comparativo de fusão.
+- Texto stemizado: TODOS os espelhos do EURLex-4K (thekop79, PECOS/xmc-base,
+  AttentionXML) distribuem o texto stemizado e sem stopwords — é o pré-processamento
+  original (Loza Mencía & Fürnkranz). NÃO existe versão "drop-in" com palavras
+  inteiras e o mesmo split/rótulos. Decisão (2026-06-06): o recuperador denso usa o
+  MESMO texto stemizado. Duas justificativas: (1) é fiel ao pipeline de referência —
+  os artigos-base (xCoRetriev / França et al.) usam exatamente essa base do
+  AttentionXML, então mantemos comparabilidade com o baseline; (2) a degradação de
+  embeddings por stemização fica registrada como ameaça à validade, mas não invalida
+  o estudo comparativo de fusão (ambos os recuperadores operam sobre o mesmo corpus).
+  Texto cru completo só existe em outro dataset (EURLEX57K, Chalkidis 2019), com
+  split e rótulos diferentes → fora de escopo, quebraria a comparabilidade.
 - Rótulos nunca vistos no teste: tratados normalmente (recuperação pode não os
   alcançar; isso é esperado e medido pelas métricas).
 
