@@ -20,9 +20,11 @@ RUN apt-get update && \
 # precisam para compilar sem isolamento:
 #   - Cython: exigido pelo próprio xclib (pyxclib)
 #   - pybind11: exigido pelo fasttext (dependência do xclib)
-#   - numpy: usado na compilação de extensões
+#   - numpy: usado na compilação de extensões. Fixado em <2: o xclib (compilado
+#     logo abaixo) e o retriv/faiss esperam o ABI do numpy 1.x; deixar subir para
+#     2.x quebra a importação ("numpy.core.multiarray failed to import").
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir Cython numpy pybind11
+    pip install --no-cache-dir Cython "numpy<2" pybind11
 
 # Copia o requirements.txt para o build
 COPY requirements.txt /tmp/requirements.txt
