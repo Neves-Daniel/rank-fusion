@@ -75,7 +75,10 @@ class LabelDescConfig:
     num_negatives: int = 5         # negativos por rótulo
     text_max_tokens: int = 128     # primeiros N tokens (whitespace) de cada exemplo
     # geração (fiel ao label_desc do RAG-Fuse)
-    model: str = "meta-llama/Llama-3.1-8B-Instruct"
+    # default = repo oficial (gated, exige aceite de licença + HF_TOKEN). Para testar
+    # sem aprovação, exporte ANTES de rodar a env var com o espelho não-gated (mesmos
+    # pesos): LABEL_DESC_MODEL=NousResearch/Meta-Llama-3.1-8B-Instruct
+    model: str = os.environ.get("LABEL_DESC_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
     temperature: float = 0.6
     top_p: float = 0.9
     max_tokens: int = 256
