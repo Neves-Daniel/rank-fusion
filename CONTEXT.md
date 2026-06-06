@@ -18,8 +18,10 @@ fundir os dois rankings reforça acertos e reduz ruído — útil justamente na 
 
 ## O que é contribuição vs. insumo
 - **Contribuição:** o estudo comparativo de fusão × normalização para tail labels.
-- **Insumo (mínimo esforço):** os rankings base esparso e denso. A metodologia do
-  recuperador denso ainda NÃO está definida.
+- **Insumo:** os rankings base esparso e denso. O denso reproduz o do artigo
+  principal: bi-encoder BERT *fine-tuned* (espaço compartilhado texto–rótulo,
+  perda contrastiva NT-Xent), estratégia *label-as-document* com rótulos
+  representados por **RAG-labels** (descrições enriquecidas por LLM).
 
 ## Artigos-base
 1. **⭐ REFERÊNCIA PRINCIPAL — França, Rabbi, Salles, Cunha, Rocha & Gonçalves, 2025
@@ -37,7 +39,8 @@ fundir os dois rankings reforça acertos e reduz ruído — útil justamente na 
 3. **França et al., SBBD 2025.** "Muitas Classes Desbalanceadas? Não Classifique –
    Ranqueie! ... RAG-labels para Classificação Textual Multi-classe." **Origem do
    conceito de RAG-labels** (descrições de classe enriquecidas por LLM). Contexto
-   multi-classe; no nosso projeto RAG-labels é stretch, fora da v1.
+   multi-classe; **RAG-labels agora está em escopo** no nosso projeto: o
+   recuperador denso representa cada rótulo pela sua descrição RAG-labels.
 
 Todos do mesmo grupo (UFMG/UFSJ): França, Rabbi, Salles, Cunha, Rocha, Gonçalves.
 
@@ -81,7 +84,8 @@ Eurlex-4K (validação inicial, já baixado) → Wiki10-31K → AmazonCat-13K �
 ## Estado atual (atualizar conforme avança)
 - ✅ Dados do Eurlex-4K baixados e validados (15.449 treino / 3.865 teste / 3.956 rótulos;
   N=19.314 agrupado, bate com a Tabela 1 do artigo).
-- ✅ Arquivos-âncora criados; metodologia do recuperador denso ainda em aberto.
+- ✅ Arquivos-âncora criados; metodologia do recuperador denso definida: bi-encoder
+  BERT *fine-tuned* (label-as-document) + RAG-labels (ver TECH_STACK.md). Falta implementar.
 - ✅ **Recuperador esparso implementado e validado** (`src/retrieve_sparse.py`): kNN léxico
   via retriv (BM25 k1=1.5/b=0.75), agregação de vizinhos + split cabeça/cauda → run TREC.
   Sanidade no Eurlex: query 0 recuperou 3/5 rótulos-gold no top-10. Decisões: chave de

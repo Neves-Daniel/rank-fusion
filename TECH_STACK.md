@@ -30,9 +30,17 @@ deduplicar os termos da query (`dedup_query_terms`, em `retrieve_sparse.py`).
 - pyxclib (git: kunaldahiya/pyxclib)   (métricas XMTC: PSP@k, PSnDCG@k)
 - tqdm
 
-## Recuperador denso — metodologia ainda NÃO definida
-Modelo, biblioteca de embedding e mecanismo de busca serão escolhidos quando a
-metodologia do recuperador denso for decidida. Nada de denso instalado/fixado ainda.
+## Recuperador denso — bi-encoder BERT fine-tuned (label-as-document)
+Reproduz o denso do artigo principal: um BERT *fine-tuned* mapeia documento e
+rótulo num espaço vetorial compartilhado (estratégia *label-as-document*),
+treinado com perda contrastiva **NT-Xent** (InfoNCE); LR cíclico (~5e-5–5e-3),
+~3 épocas. Cada rótulo é representado pela sua descrição **RAG-labels**
+(enriquecida por LLM), não pelo nome cru do EuroVoc. Inferência: score doc×rótulo
+(cosine/dot), 64 cabeça + 64 cauda = 128 candidatos por query → run TREC.
+Biblioteca/treino a fixar no plano de implementação (sentence-transformers vs
+loop próprio HuggingFace+torch); deps densas em `requirements.txt` ainda
+provisórias. **Decisão (2026-06-06):** fine-tuning e RAG-labels deixaram de ser
+guardrail/stretch e entraram no escopo.
 
 **Decisão sobre o texto (2026-06-06):** o denso usa o MESMO texto stemizado do
 esparso. Verificamos que todos os espelhos do EURLex-4K (thekop79, PECOS/xmc-base,

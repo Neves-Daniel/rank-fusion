@@ -25,15 +25,12 @@ head labels.
   à mão (CombMNZ, RRF) só para demonstrar entendimento e validar contra o ranx.
 - **Reprodutibilidade:** fixar seeds; salvar configs de cada experimento; não
   hard-codear caminhos fora de `configs/`.
-- **Sem fine-tuning de BERT na v1.** Denso = encoder pré-treinado.
-  Fine-tuning é stretch, só depois do pipeline completo funcionar.
 - **Começar pequeno:** validar tudo no Eurlex-4K antes de escalar para
   Wiki10-31K → AmazonCat-13K → Amazon-670K.
 - **Honestidade:** registrar limitações (ex.: texto stemizado degrada embeddings),
   reportar falhas de teste como falhas, não maquiar resultados.
 
 ## Anti-padrões a evitar
-- Implementar geração de RAG-labels agora (é stretch, NÃO é entregável).
 - Rodar Amazon-670K antes de validar o pipeline no Eurlex-4K.
 - Recomputar recuperação base a cada experimento de fusão (gerar runs uma vez,
   iterar fusão offline).
@@ -41,3 +38,10 @@ head labels.
 
 ## Stack
 Ver TECH_STACK.md. Arquitetura e formatos: ARCHITECTURE.md.
+
+## Memória persistente (padrão por categoria)
+Memórias ficam em subpastas de `~/.claude/projects/-home-dnpin-nlp-rank-fusion/memory/`
+por categoria (`projeto/`, `usuario/`, `ambiente/`, ...). Cada pasta tem um
+`README.md` como índice local; o `MEMORY.md` raiz lista só as categorias. Use a
+skill `/save-memory` para salvar no local correto e o agent `memory-curator` para
+revisão periódica. **Nunca** salve memórias direto na raiz do diretório de memória.

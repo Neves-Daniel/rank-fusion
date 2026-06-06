@@ -14,8 +14,10 @@ cabeça/cauda definida globalmente (Pareto 80/20). Ver ARCHITECTURE.md.
 1. Carregar dataset (texto + rótulos por documento) e gerar os folds de CV.
 2. Gerar dois rankings base de rótulos por doc de teste:
    - esparso (BM25),
-   - denso (metodologia a definir).
-   A estratégia que converte documento em ranking de rótulos ainda será decidida.
+   - denso (bi-encoder BERT *fine-tuned*, label-as-document, com RAG-labels).
+   Estratégia denso decidida: BERT fine-tuned (perda NT-Xent) embeda doc e rótulo
+   num espaço compartilhado e ranqueia rótulos por similaridade direta doc×rótulo;
+   cada rótulo é representado pela sua descrição RAG-labels (enriquecida por LLM).
 3. Para cada par (normalização, algoritmo de fusão): fundir os dois rankings.
 4. Avaliar com métricas globais e **de cauda**.
 5. Selecionar as melhores combinações via grid search nos datasets.
@@ -51,8 +53,6 @@ cabeça/cauda definida globalmente (Pareto 80/20). Ver ARCHITECTURE.md.
   alcançar; isso é esperado e medido pelas métricas).
 
 ## Fora de escopo (v1)
-- Geração de RAG-labels (componente de qualidade do xCoRetriev; stretch).
-- Fine-tuning de BERT / treino de classificador XMTC.
 - Datasets além dos 4 listados.
 
 ## Cronograma (8 semanas — ver proposta)
