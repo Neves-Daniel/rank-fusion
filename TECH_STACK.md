@@ -29,6 +29,7 @@ deduplicar os termos da query (`dedup_query_terms`, em `retrieve_sparse.py`).
 ## A instalar
 - pyxclib (git: kunaldahiya/pyxclib)   (métricas XMTC: PSP@k, PSnDCG@k)
 - tqdm
+- vllm (SÓ na Brev/GPU)   (serve Llama-3.1-8B-Instruct p/ gerar as RAG-labels; ver src/label_desc.py)
 
 ## Recuperador denso — bi-encoder BERT fine-tuned (label-as-document)
 Reproduz o denso do artigo principal: um BERT *fine-tuned* mapeia documento e
@@ -41,6 +42,15 @@ Biblioteca/treino a fixar no plano de implementação (sentence-transformers vs
 loop próprio HuggingFace+torch); deps densas em `requirements.txt` ainda
 provisórias. **Decisão (2026-06-06):** fine-tuning e RAG-labels deixaram de ser
 guardrail/stretch e entraram no escopo.
+
+**RAG-labels — geração (implementado 2026-06-06):** `src/label_desc.py` replica a task
+`label_desc` do RAG-Fuse — para cada rótulo, um LLM escreve uma descrição a partir de
+exemplos contrastivos (docs com/sem o rótulo). LLM = **Llama-3.1-8B-Instruct via vLLM**
+(local na Brev; o RAG-Fuse usava AWS Bedrock — só o cliente muda). Geradas **por fold**
+(só o corpus de treino do fold → evita vazamento test→descrição) e cacheadas em
+`data/<ds>/rag-labels/fold{f}/labels_descriptions.jsonl` (append-only, resume idempotente).
+Prompt verbatim em `src/prompts/label_desc_prompt.txt`. Import do vLLM é lazy: a suíte
+mínima de testes roda na CPU com um dublê (FakeLLM); o smoke real é opt-in (`-m vllm`).
 
 **Decisão sobre o texto (2026-06-06):** o denso usa o MESMO texto stemizado do
 esparso. Verificamos que todos os espelhos do EURLex-4K (thekop79, PECOS/xmc-base,

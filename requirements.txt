@@ -7,9 +7,13 @@ retriv>=0.2.3            # BM25 + tokenização; traz ranx, torch e transformers
 #   python -m nltk.downloader punkt punkt_tab stopwords
 # (bm25s foi descartado: usamos retriv para fidelidade ao código do autor.)
 
-# Recuperação densa — estágio posterior, metodologia ainda a definir (ver TECH_STACK.md)
-sentence-transformers>=3.0.0   # provisório; não fixado até a metodologia do denso
+# Recuperação densa — bi-encoder BERT fine-tuned (label-as-document) + RAG-labels (ver TECH_STACK.md)
+sentence-transformers>=3.0.0   # provisório; biblioteca de treino do bi-encoder a fixar
 faiss-cpu>=1.7.2,<1.9          # <1.9: versões mais novas exigem numpy 2.x (ver nota no numpy)
+# Geração das RAG-labels (descrições de rótulo via LLM) — SÓ na Brev/GPU, NÃO na WSL local.
+# Import é lazy em src/label_desc.py (VLLMBackend); a suíte mínima de testes não exige vllm.
+# vllm traz seu próprio torch/CUDA — instalar na Brev conforme a GPU disponível.
+vllm                           # serve meta-llama/Llama-3.1-8B-Instruct localmente
 
 # Fusão / normalização / métricas clássicas
 ranx>=0.3.20            # (já vem como dependência do retriv)

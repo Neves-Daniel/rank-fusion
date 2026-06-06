@@ -93,7 +93,11 @@ Eurlex-4K (validação inicial, já baixado) → Wiki10-31K → AmazonCat-13K �
 - ✅ **Splits de 5-fold CV implementados** (`src/splits.py`): protocolo oficial fiel ao
   artigo (CV sobre dataset agrupado, cabeça/cauda global). `run_cv` gera 1 run por fold.
   Validado: 24 testes leves verdes + folds reais (~3.863 queries/fold; cauda = 80%).
-- ⬜ Recuperador denso, fusão, métricas e grid search: a fazer.
+- ✅ **RAG-labels (Etapa 1 do denso) implementadas** (`src/label_desc.py`): descrição por
+  rótulo via LLM (Llama-3.1-8B/vLLM), **por fold**, fiel à task `label_desc` do RAG-Fuse.
+  13 testes CPU verdes (FakeLLM); falta `pip install vllm` + rodar na Brev (gera os JSONL por fold).
+- ⬜ Recuperador denso (bi-encoder: treino contrastivo + inferência), fusão, métricas e
+  grid search: a fazer.
   - Métricas escolhidas: P@k/nDCG@k **segmentados cabeça/cauda** (p/ bater com Tabela 2) +
     PSP@k/PSnDCG@k como extensão do projeto. O artigo NÃO usa PSP.
 - ⏳ Falta rodar o esparso completo na Brev (`python -m src.retrieve_sparse`, 5 folds) →

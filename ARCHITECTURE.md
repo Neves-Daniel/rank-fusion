@@ -11,13 +11,16 @@ rank-fusion/
 │  ├─ data.py            # carregar datasets (formato PECOS) -> Dataset/Split
 │  ├─ splits.py          # 5-fold CV sobre dataset agrupado (treino+teste)      (feito)
 │  ├─ retrieve_sparse.py # recuperador esparso (BM25 kNN, retriv) -> run TREC   (feito)
-│  ├─ retrieve_dense.py  # recuperador denso (metodologia a definir) -> run TREC (a fazer)
+│  ├─ label_desc.py      # RAG-labels: descrição de rótulo via LLM (vLLM), por fold (feito)
+│  ├─ prompts/           # templates de prompt (label_desc_prompt.txt, verbatim RAG-Fuse)
+│  ├─ retrieve_dense.py  # denso: bi-encoder BERT fine-tuned (label-as-document) -> run TREC (a fazer)
 │  ├─ fusion.py          # wrappers ranx + CombMNZ/RRF próprios (a fazer)
 │  ├─ metrics.py         # P@k, nDCG@k, PSP@k, split head/tail   (a fazer)
 │  └─ gridsearch.py      # (fusão × normalização) sobre runs     (a fazer)
 ├─ configs/        # 1 arquivo por experimento (pares fusão×norm, k, etc.)
 ├─ data/<dataset>/
 │  ├─ raw/         # arquivos baixados (NÃO versionar — ver .claudeignore/.gitignore)
+│  ├─ rag-labels/  # descrições de rótulo por fold (fold{f}/labels_descriptions.jsonl)
 │  └─ runs/        # run files TREC gerados pelos recuperadores
 └─ notebooks/      # análise exploratória
 ```
@@ -34,6 +37,9 @@ folds do artigo é desconhecida: reproduzimos a METODOLOGIA, não os índices ex
 ## Fluxo do pipeline (estágios desacoplados por arquivos)
 1. **data.py** lê `raw/` → objetos em memória (texto + rótulos por doc).
    **splits.py** agrupa treino+teste e gera os folds de CV.
+1.5 **label_desc.py** gera, **por fold**, uma descrição por rótulo (RAG-labels) com um
+   LLM (Llama-3.1-8B via vLLM), usando só o corpus de treino do fold (sem vazamento).
+   Saída: `rag-labels/fold{f}/labels_descriptions.jsonl`. Insumo do lado-rótulo do denso.
 2. **retrieve_sparse.py / retrieve_dense.py** geram, para cada doc de teste (query)
    de cada fold, um ranking de rótulos. Saída = `runs/{sparse,dense}.fold{f}.trec`,
    onde `qid` = índice GLOBAL do doc agrupado (o gold é `label_cols[qid]`).
@@ -48,7 +54,10 @@ folds do artigo é desconhecida: reproduzimos a METODOLOGIA, não os índices ex
        deduplicada → recursão/aliasing → segfault). Dedup resolve; custo: pesos
        de query binários (ignora a frequência do termo na query). Os docs são
        legítimos — não é defeito de dados.
-   - **Denso:** metodologia ainda a definir.
+   - **Denso (definido):** bi-encoder BERT *fine-tuned* (label-as-document, perda
+     NT-Xent). Embeda doc e rótulo num espaço compartilhado e ranqueia rótulos por
+     similaridade doc×rótulo; cada rótulo é representado pela descrição **RAG-labels**
+     (estágio 1.5). Mesmo split cabeça/cauda 64+64. Ver TECH_STACK.md.
 3. **fusion.py** combina os runs (normalização + algoritmo de fusão), por fold → run fundido.
 4. **metrics.py** avalia cada run contra o gold (qrels = `label_cols[qid]`), por fold;
    reporta média ± desvio dos folds. Sempre inclui métricas de cauda.
