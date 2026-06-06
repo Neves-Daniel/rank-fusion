@@ -8,8 +8,11 @@ retriv>=0.2.3            # BM25 + tokenização; traz ranx, torch e transformers
 # (bm25s foi descartado: usamos retriv para fidelidade ao código do autor.)
 
 # Recuperação densa — bi-encoder BERT fine-tuned (label-as-document) + RAG-labels (ver TECH_STACK.md)
-sentence-transformers>=3.0.0   # provisório; biblioteca de treino do bi-encoder a fixar
-faiss-cpu>=1.7.2,<1.9          # <1.9: versões mais novas exigem numpy 2.x (ver nota no numpy)
+# Porte do DenseRetriever do RAG-Fuse em torch+transformers puros (já vêm via retriv).
+# A loss NT-Xent + miner por relevance-map é fiel ao RAG-Fuse via:
+pytorch-metric-learning>=2.0    # losses.NTXentLoss + DotProductDistance + RelevanceMiner (BaseMiner)
+# (sem sentence-transformers / faiss: encoder e similaridade doc×rótulo são exatos,
+#  feitos à mão — ConcatenatePooling 3072-d + matmul cosine sobre ~4k rótulos.)
 # Geração das RAG-labels (descrições de rótulo via LLM) — SÓ na Brev/GPU, NÃO na WSL local.
 # Import é lazy em src/label_desc.py (VLLMBackend); a suíte mínima de testes não exige vllm.
 # vllm traz seu próprio torch/CUDA — instalar na Brev conforme a GPU disponível.

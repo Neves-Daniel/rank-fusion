@@ -30,18 +30,35 @@ deduplicar os termos da query (`dedup_query_terms`, em `retrieve_sparse.py`).
 - pyxclib (git: kunaldahiya/pyxclib)   (métricas XMTC: PSP@k, PSnDCG@k)
 - tqdm
 - vllm (SÓ na Brev/GPU)   (serve Llama-3.1-8B-Instruct p/ gerar as RAG-labels; ver src/label_desc.py)
+- pytorch-metric-learning (>=2.0)   (loss NT-Xent + miner do denso; ver src/retrieve_dense.py)
+  - torch/transformers já vêm via retriv; NÃO usamos sentence-transformers/faiss
+    (encoder e similaridade doc×rótulo são feitos à mão — exatos e reprodutíveis).
 
-## Recuperador denso — bi-encoder BERT fine-tuned (label-as-document)
-Reproduz o denso do artigo principal: um BERT *fine-tuned* mapeia documento e
-rótulo num espaço vetorial compartilhado (estratégia *label-as-document*),
-treinado com perda contrastiva **NT-Xent** (InfoNCE); LR cíclico (~5e-5–5e-3),
-~3 épocas. Cada rótulo é representado pela sua descrição **RAG-labels**
-(enriquecida por LLM), não pelo nome cru do EuroVoc. Inferência: score doc×rótulo
-(cosine/dot), 64 cabeça + 64 cauda = 128 candidatos por query → run TREC.
-Biblioteca/treino a fixar no plano de implementação (sentence-transformers vs
-loop próprio HuggingFace+torch); deps densas em `requirements.txt` ainda
-provisórias. **Decisão (2026-06-06):** fine-tuning e RAG-labels deixaram de ser
-guardrail/stretch e entraram no escopo.
+## Recuperador denso — bi-encoder BERT fine-tuned (label-as-document) — IMPLEMENTADO
+`src/retrieve_dense.py`: porte fiel do `DenseRetriever` do RAG-Fuse em
+**torch+transformers puros** (sem PyTorch-Lightning/Hydra/nmslib), no estilo do
+porte do esparso (retriv).
+- **Encoder:** `bert-base-uncased` (output_hidden_states) + ConcatenatePooling
+  (concatena as 4 últimas camadas no token [CLS] → **3072-d**, L2-normalizado).
+- **Loss/treino:** NT-Xent (temp 0.07) + miner por relevance-map, via
+  `pytorch-metric-learning` (`losses.NTXentLoss` + `DotProductDistance` escala 20 +
+  porte do `RelevanceMiner`). Otimização = **AdamW lr=5e-5, wd=1e-2, amsgrad +
+  warmup linear** (config ATIVA do RAG-Fuse; o CyclicLR de lá está comentado —
+  fica como knob alternativo). 5 épocas, fp16, **por fold** (só o corpus de treino
+  do fold → sem vazamento).
+- **Inferência:** embeda doc e rótulo no espaço compartilhado e ranqueia por
+  **similaridade cosine EXATA** (matmul; troquei o HNSW/nmslib do RAG-Fuse — só
+  ~4k rótulos, exato é mais simples/reprodutível). Mantém 64 cabeça + 64 cauda =
+  128 candidatos por query → run TREC (`runs/dense.fold{f}.trec`).
+- **RAG-labels OPCIONAL** via `label_enhancement` (knob nativo do RAG-Fuse):
+  `"LLM"` = `f"{nome} {descrição RAG-labels do fold}"`; `"NONE"` = só o nome cru.
+  Fallback automático ao nome cru se o JSONL do fold não existir.
+- **Imports lazy** (torch/transformers/pml só dentro de build_encoder/build_loss):
+  importar o módulo e rodar a suíte mínima (FakeEncoder) não toca a stack de GPU;
+  testes da loss/encoder reais são opt-in (marker `bert`). Treino real só na Brev.
+- Pendência de borda mantida: docs longos da EUR-Lex truncados a 512 wordpieces
+  (`text_max_length`); descrição de rótulo a `label_max_length=256`.
+**Decisão (2026-06-06):** fine-tuning e RAG-labels entraram no escopo.
 
 **RAG-labels — geração (implementado 2026-06-06):** `src/label_desc.py` replica a task
 `label_desc` do RAG-Fuse — para cada rótulo, um LLM escreve uma descrição a partir de

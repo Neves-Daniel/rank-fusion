@@ -96,8 +96,15 @@ Eurlex-4K (validação inicial, já baixado) → Wiki10-31K → AmazonCat-13K �
 - ✅ **RAG-labels (Etapa 1 do denso) implementadas** (`src/label_desc.py`): descrição por
   rótulo via LLM (Llama-3.1-8B/vLLM), **por fold**, fiel à task `label_desc` do RAG-Fuse.
   13 testes CPU verdes (FakeLLM); falta `pip install vllm` + rodar na Brev (gera os JSONL por fold).
-- ⬜ Recuperador denso (bi-encoder: treino contrastivo + inferência), fusão, métricas e
-  grid search: a fazer.
+- ✅ **Recuperador denso implementado** (`src/retrieve_dense.py`): porte do
+  `DenseRetriever` do RAG-Fuse em torch+transformers puros — BERT + ConcatenatePooling
+  (3072-d), NT-Xent (temp 0.07, via pytorch-metric-learning) + miner por relevance-map,
+  AdamW lr=5e-5 + warmup linear, 5 ép./fp16, por fold; inferência por cosine exato →
+  64+64 → `runs/dense.fold{f}.trec`. **RAG-labels OPCIONAL** via `label_enhancement`
+  (`"LLM"` usa as descrições do fold; `"NONE"` cai no nome cru — fallback automático).
+  15 testes CPU verdes (FakeEncoder; loss/encoder reais são opt-in, marker `bert`).
+  Falta `pip install pytorch-metric-learning` + treinar/inferir na Brev.
+- ⬜ Fusão, métricas e grid search: a fazer.
   - Métricas escolhidas: P@k/nDCG@k **segmentados cabeça/cauda** (p/ bater com Tabela 2) +
     PSP@k/PSnDCG@k como extensão do projeto. O artigo NÃO usa PSP.
 - ⏳ Falta rodar o esparso completo na Brev (`python -m src.retrieve_sparse`, 5 folds) →

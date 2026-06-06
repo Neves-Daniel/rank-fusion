@@ -13,7 +13,7 @@ rank-fusion/
 │  ├─ retrieve_sparse.py # recuperador esparso (BM25 kNN, retriv) -> run TREC   (feito)
 │  ├─ label_desc.py      # RAG-labels: descrição de rótulo via LLM (vLLM), por fold (feito)
 │  ├─ prompts/           # templates de prompt (label_desc_prompt.txt, verbatim RAG-Fuse)
-│  ├─ retrieve_dense.py  # denso: bi-encoder BERT fine-tuned (label-as-document) -> run TREC (a fazer)
+│  ├─ retrieve_dense.py  # denso: bi-encoder BERT fine-tuned (label-as-document) -> run TREC (feito)
 │  ├─ fusion.py          # wrappers ranx + CombMNZ/RRF próprios (a fazer)
 │  ├─ metrics.py         # P@k, nDCG@k, PSP@k, split head/tail   (a fazer)
 │  └─ gridsearch.py      # (fusão × normalização) sobre runs     (a fazer)
@@ -54,10 +54,18 @@ folds do artigo é desconhecida: reproduzimos a METODOLOGIA, não os índices ex
        deduplicada → recursão/aliasing → segfault). Dedup resolve; custo: pesos
        de query binários (ignora a frequência do termo na query). Os docs são
        legítimos — não é defeito de dados.
-   - **Denso (definido):** bi-encoder BERT *fine-tuned* (label-as-document, perda
-     NT-Xent). Embeda doc e rótulo num espaço compartilhado e ranqueia rótulos por
-     similaridade doc×rótulo; cada rótulo é representado pela descrição **RAG-labels**
-     (estágio 1.5). Mesmo split cabeça/cauda 64+64. Ver TECH_STACK.md.
+   - **Denso (implementado, `retrieve_dense.py`):** bi-encoder BERT *fine-tuned*
+     (porte do `DenseRetriever` do RAG-Fuse em torch+transformers puros). Encoder =
+     `bert-base-uncased` + ConcatenatePooling (concatena as 4 últimas camadas no
+     [CLS] → 3072-d, L2-normalizado). Treino contrastivo por fold: perda NT-Xent
+     (temp 0.07, via `pytorch-metric-learning`) + miner por relevance-map; AdamW
+     lr=5e-5 + warmup linear, 5 épocas, fp16. Inferência: embeda doc e rótulo no
+     espaço compartilhado e ranqueia por **similaridade cosine exata** (matmul; sem
+     HNSW/nmslib — só ~4k rótulos), mantendo top-64 cabeça + top-64 cauda = 128.
+     - *RAG-labels OPCIONAL (knob `label_enhancement`):* `"LLM"` representa cada
+       rótulo por `f"{nome} {descrição RAG-labels do fold}"` (estágio 1.5); `"NONE"`
+       usa só o nome cru do EuroVoc. Fallback automático ao nome cru se o JSONL do
+       fold não existir. É o mecanismo nativo do RAG-Fuse, não uma gambiarra.
 3. **fusion.py** combina os runs (normalização + algoritmo de fusão), por fold → run fundido.
 4. **metrics.py** avalia cada run contra o gold (qrels = `label_cols[qid]`), por fold;
    reporta média ± desvio dos folds. Sempre inclui métricas de cauda.
