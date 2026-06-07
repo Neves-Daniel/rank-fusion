@@ -14,7 +14,7 @@ rank-fusion/
 │  ├─ label_desc.py      # RAG-labels: descrição de rótulo via LLM (vLLM), por fold (feito)
 │  ├─ prompts/           # templates de prompt (label_desc_prompt.txt, verbatim RAG-Fuse)
 │  ├─ retrieve_dense.py  # denso: bi-encoder BERT fine-tuned (label-as-document) -> run TREC (feito)
-│  ├─ fusion.py          # wrappers ranx + CombMNZ/RRF próprios (a fazer)
+│  ├─ fusion.py          # wrappers ranx (6 norm × 10 fusão) + CombMNZ/RRF próprios (feito)
 │  ├─ metrics.py         # P@k, nDCG@k, PSP@k, split head/tail   (a fazer)
 │  └─ gridsearch.py      # (fusão × normalização) sobre runs     (a fazer)
 ├─ configs/        # 1 arquivo por experimento (pares fusão×norm, k, etc.)
