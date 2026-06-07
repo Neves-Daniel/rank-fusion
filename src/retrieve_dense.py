@@ -72,13 +72,16 @@ class DenseConfig:
     label_max_length: int = 256       # cabe a descrição RAG-labels (gen max_tokens=256)
     # treino contrastivo (config ATIVA do RAG-Fuse)
     epochs: int = 5
-    batch_size: int = 32
+    # batch_size grande aproveita a A100-80GB e dá mais negativos in-batch ao NT-Xent
+    # (melhora o contrastivo). RAG-Fuse usava 32; subimos p/ acelerar sem mexer na
+    # fidelidade. O miner é O(batch²) em Python puro, mas trivial mesmo em 128.
+    batch_size: int = 128
     lr: float = 5e-5
     weight_decay: float = 1e-2
     warmup_ratio: float = 0.0         # RAG-Fuse: num_warmup_steps=0
     temperature: float = 0.07         # NT-Xent
     precision: str = "fp16"           # "fp16" (autocast+GradScaler) em GPU; ignorado em CPU
-    num_workers: int = 4
+    num_workers: int = 8              # caixa do lab tem 16 CPUs; evita a GPU passar fome
     # inferência / split cabeça-cauda
     num_labels: int = 64              # rótulos mantidos POR classe (64+64=128, como o artigo)
     head_frac: float = 0.20           # Pareto: 20% mais frequentes = cabeça
