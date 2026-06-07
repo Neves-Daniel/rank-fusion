@@ -2,8 +2,10 @@
 
 Combina os dois runs base por fold (BM25 kNN + bi-encoder denso) num único ranking,
 varrendo o produto **(normalização × algoritmo de fusão)** que o artigo-base estuda
-(França et al. 2025, arXiv 2507.03761): 6 normalizações × 10 fusões = 60 combinações,
-melhor reportada = **CombMNZ + ZMUV**.
+(França et al. 2025, arXiv 2507.03761): 6 normalizações × 10 fusões, melhor reportada
+= **CombMNZ + ZMUV**. Além do artigo, incluímos extras do ranx para teste: a norma
+`min-max-inverted` e as fusões `rrf`, `logn_isr`, `rbc` (φ), `gmnz` (γ) — total de
+7 normalizações × 14 fusões = 98 combinações no grid.
 
 Fonte da verdade = `ranx` (AmenRa/ranx), como manda o guardrail do projeto. Para
 demonstrar entendimento e validar o ranx, reimplementamos 2 algoritmos à mão
@@ -32,16 +34,21 @@ if __package__ in {None, ""}:
 
 
 # Mapeamento nome-do-artigo → string aceita pelo ranx 0.3.21 (validado).
-# São as 6 normalizações do artigo (Seção 4).
+# As 6 normalizações do artigo (Seção 4) + min-max-inverted (extra do ranx, para
+# scores invertidos/de distância — inverte a ordem; útil p/ ablação, não para o
+# melhor resultado, já que nossos scores são similaridades).
 NORMS: dict[str, str] = {
     "minmax": "min-max",
+    "minmaxinv": "min-max-inverted",
     "max": "max",
     "sum": "sum",
     "zmuv": "zmuv",
     "rank": "rank",
     "borda": "borda",
 }
-# São as 10 fusões do artigo (score/rank/voting-based).
+# As 10 fusões do artigo (score/rank/voting-based) + 4 extras do ranx para teste:
+# rrf (rank), logn_isr (variante log-n do ISR), rbc (rank-biased centroids, param φ),
+# gmnz (CombMNZ generalizado, param γ). Parâmetros default vêm de FusionConfig.
 METHODS: dict[str, str] = {
     "combmin": "min",
     "combmax": "max",
@@ -53,7 +60,25 @@ METHODS: dict[str, str] = {
     "logisr": "log_isr",
     "bordafuse": "bordafuse",
     "condorcet": "condorcet",
+    # extras (além do artigo)
+    "rrf": "rrf",
+    "lognisr": "logn_isr",
+    "rbc": "rbc",
+    "gmnz": "gmnz",
 }
+
+# Métodos que exigem parâmetro extra no ranx → como mapear de FusionConfig.
+_PARAMIZED = {"rrf", "rbc", "gmnz"}
+
+
+def method_params(method: str, k: int = 60, phi: float = 0.8, gamma: float = 2.0) -> dict | None:
+    """Parâmetros default por método (None para os sem parâmetro). As chaves são as
+    que o ranx 0.3.21 espera: rrf→k, rbc→phi, gmnz→gamma."""
+    return {
+        "rrf": {"k": k},
+        "rbc": {"phi": phi},
+        "gmnz": {"gamma": gamma},
+    }.get(method)
 
 
 @dataclass
@@ -66,6 +91,8 @@ class FusionConfig:
     norm: str = "zmuv"
     method: str = "combmnz"
     rrf_k: int = 60            # k do RRF (default do ranx)
+    rbc_phi: float = 0.8       # φ do RBC (rank-biased centroids)
+    gmnz_gamma: float = 2.0    # γ do GMNZ (CombMNZ generalizado)
     n_folds: int = 5
 
     def sparse_path(self, fold_id: int) -> str:
@@ -192,7 +219,7 @@ def fuse_fold(cfg: FusionConfig, fold_id: int, norm: str, method: str) -> str:
     Retorna o caminho de saída."""
     sparse = load_run(cfg.sparse_path(fold_id), name="sparse")
     dense = load_run(cfg.dense_path(fold_id), name="dense")
-    params = {"k": cfg.rrf_k} if method == "rrf" else None  # rrf não está no grid do artigo; reservado
+    params = method_params(method, k=cfg.rrf_k, phi=cfg.rbc_phi, gamma=cfg.gmnz_gamma)
     fused = fuse_runs([sparse, dense], norm=norm, method=method, params=params)
     out = cfg.out_path(fold_id, norm, method)
     save_run(fused, out)

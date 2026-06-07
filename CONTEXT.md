@@ -105,10 +105,11 @@ Eurlex-4K (validação inicial, já baixado) → Wiki10-31K → AmazonCat-13K �
   15 testes CPU verdes (FakeEncoder; loss/encoder reais são opt-in, marker `bert`).
   Falta `pip install pytorch-metric-learning` + treinar/inferir na Brev.
 - ✅ **Fusão implementada** (`src/fusion.py`): wrappers ranx para as 6 normalizações ×
-  10 fusões do artigo (60 combinações; melhor = CombMNZ+ZMUV) + CombMNZ e RRF
-  reimplementados à mão e validados contra o ranx (igualdade de ordem). `run_cv` funde
-  o melhor par por fold; `run_grid` funde as 60 combinações. 13 testes CPU verdes.
-  Insumo do grid search. Import do ranx é lazy.
+  10 fusões do artigo (melhor = CombMNZ+ZMUV) + extras p/ teste (norma min-max-inverted;
+  fusões rrf, logn_isr, rbc[φ], gmnz[γ]) = **7 norm × 14 fusão = 98 combinações**.
+  CombMNZ e RRF reimplementados à mão e validados contra o ranx (igualdade de ordem).
+  `run_cv` funde o melhor par por fold; `run_grid` funde as 98 combinações. 14 testes
+  CPU verdes. Insumo do grid search. Import do ranx é lazy.
 - ⬜ Métricas e grid search: a fazer.
   - Métricas escolhidas: P@k/nDCG@k **segmentados cabeça/cauda** (p/ bater com Tabela 2) +
     PSP@k/PSnDCG@k como extensão do projeto. O artigo NÃO usa PSP.

@@ -19,6 +19,7 @@ from src.fusion import (
     NORMS,
     FusionConfig,
     comb_mnz,
+    method_params,
     ranking,
     rrf,
 )
@@ -35,10 +36,19 @@ def test_import_nao_puxa_ranx():
     assert "ok" in res.stdout
 
 
-def test_mapeamentos_tem_as_60_combinacoes_do_artigo():
-    assert len(NORMS) == 6 and len(METHODS) == 10
-    assert set(METHODS) >= {"combmnz", "combsum", "isr", "logisr", "bordafuse", "condorcet"}
+def test_mapeamentos_artigo_mais_extras():
+    # 6 norm + min-max-inverted = 7 ; 10 fusões do artigo + 4 extras = 14
+    assert len(NORMS) == 7 and len(METHODS) == 14
+    assert NORMS["minmaxinv"] == "min-max-inverted"
+    assert {"rrf", "lognisr", "rbc", "gmnz"} <= set(METHODS)
     assert NORMS["zmuv"] == "zmuv" and METHODS["combmnz"] == "mnz"
+
+
+def test_method_params_so_para_parametrizados():
+    assert method_params("combmnz") is None
+    assert method_params("rrf", k=42) == {"k": 42}
+    assert method_params("rbc", phi=0.9) == {"phi": 0.9}
+    assert method_params("gmnz", gamma=3) == {"gamma": 3}
 
 
 def test_fusion_config_paths():
@@ -113,14 +123,18 @@ def toy_runs():
     return r1, r2
 
 
-def test_todas_as_60_combinacoes_rodam_no_ranx(toy_runs):
+def test_todas_as_98_combinacoes_rodam_no_ranx(toy_runs):
     from src.fusion import fuse_runs
 
     r1, r2 = toy_runs
+    n = 0
     for norm in NORMS:
         for method in METHODS:
-            fused = fuse_runs([r1, r2], norm=norm, method=method)
-            assert fused.to_dict()              # produz ranking não-vazio
+            params = method_params(method)          # passa φ/γ/k aos parametrizados
+            fused = fuse_runs([r1, r2], norm=norm, method=method, params=params)
+            assert fused.to_dict()                  # produz ranking não-vazio
+            n += 1
+    assert n == 98                                  # 7 norm × 14 fusão
 
 
 def test_comb_mnz_a_mao_bate_com_ranx(toy_runs):
