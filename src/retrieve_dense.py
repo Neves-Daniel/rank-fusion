@@ -75,16 +75,18 @@ class DenseConfig:
     label_max_length: int = 256       # cabe a descrição RAG-labels (gen max_tokens=256)
     # treino contrastivo (config ATIVA do RAG-Fuse)
     epochs: int = 5
-    # batch_size grande aproveita a A100-80GB e dá mais negativos in-batch ao NT-Xent
-    # (melhora o contrastivo). RAG-Fuse usava 32; subimos p/ acelerar sem mexer na
-    # fidelidade. O miner é O(batch²) em Python puro, mas trivial mesmo em 128.
-    batch_size: int = 128
+    # batch_size = 32 (fiel ao RAG-Fuse). Mantido para os 5 folds do CV serem
+    # treinados IDENTICAMENTE — mudar o batch muda o nº de negativos in-batch e de
+    # passos/época (confunde efeito-de-fold com efeito-de-hiperparâmetro). Para
+    # acelerar sem mexer na fidelidade, paralelize folds em GPUs (--fold/--device),
+    # não aumente o batch.
+    batch_size: int = 32
     lr: float = 5e-5
     weight_decay: float = 1e-2
     warmup_ratio: float = 0.0         # RAG-Fuse: num_warmup_steps=0
     temperature: float = 0.07         # NT-Xent
     precision: str = "fp16"           # "fp16" (autocast+GradScaler) em GPU; ignorado em CPU
-    num_workers: int = 8              # caixa do lab tem 16 CPUs; evita a GPU passar fome
+    num_workers: int = 8              # caixa do lab tem 16 CPUs; evita a GPU passar fome (fidelidade-neutro)
     # inferência / split cabeça-cauda
     num_labels: int = 64              # rótulos mantidos POR classe (64+64=128, como o artigo)
     head_frac: float = 0.20           # Pareto: 20% mais frequentes = cabeça
@@ -493,6 +495,13 @@ def run_cv(cfg: DenseConfig | None = None, only_fold: int | None = None) -> None
         f"| {cfg.n_folds}-fold (seed={cfg.seed}) | enhancement: {cfg.label_enhancement} "
         f"| modelo: {cfg.architecture} | device: {cfg.device}"
         + (f" | só fold {only_fold}" if only_fold is not None else "")
+    )
+    # logar o config de treino: o log passa a auto-documentar batch/épocas/lr (uma
+    # mistura de batch entre folds já mascarou um confound do CV — ver git log).
+    print(
+        f"treino: batch={cfg.batch_size} | épocas={cfg.epochs} | lr={cfg.lr} "
+        f"| wd={cfg.weight_decay} | temp={cfg.temperature} | precision={cfg.precision} "
+        f"| text_max={cfg.text_max_length} | label_max={cfg.label_max_length}"
     )
 
     folds = make_folds(len(pooled), k=cfg.n_folds, seed=cfg.seed)
