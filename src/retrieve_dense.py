@@ -411,7 +411,7 @@ def train_fold(
         num_training_steps=total_steps,
     )
     use_amp = cfg.precision == "fp16" and device.type == "cuda"
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
 
     encoder.train()
     for epoch in range(cfg.epochs):
@@ -425,9 +425,14 @@ def train_fold(
                 label_rpr = encoder(label_ids)
                 loss = loss_fn(text_idx, text_rpr, label_idx, label_rpr)
             scaler.scale(loss).backward()
+            prev_scale = scaler.get_scale()
             scaler.step(optimizer)
             scaler.update()
-            scheduler.step()
+            # só avança o scheduler se o otimizador de fato passou (o GradScaler pula
+            # o step quando detecta inf/nan e reduz a escala — chamar scheduler.step()
+            # nesse caso desalinha o LR; ver UserWarning do PyTorch).
+            if not use_amp or scaler.get_scale() >= prev_scale:
+                scheduler.step()
             running += float(loss.detach())
         print(f"  época {epoch + 1}/{cfg.epochs}: loss média = {running / max(1, len(loader)):.4f}")
 
