@@ -39,7 +39,10 @@ este módulo e rodar a suíte mínima de testes (FakeEncoder) NÃO toca a stack 
 espelhando o import tardio do retriv/vllm nos outros recuperadores.
 
 Uso (na Brev/GPU):
-    python -m src.retrieve_dense            # 5 folds, Eurlex-4K → runs/dense.fold{f}.trec
+    python -m src.retrieve_dense                 # 5 folds; pula os que já têm .trec (resume)
+    python -m src.retrieve_dense --fold 3        # só o fold 3 (resume direcionado)
+    python -m src.retrieve_dense --fold 4 --device cuda:1   # paralelizar folds em GPUs
+    python -m src.retrieve_dense --no-resume     # refaz tudo, ignorando .trec existentes
 """
 from __future__ import annotations
 
@@ -93,6 +96,7 @@ class DenseConfig:
     seed: int = 42                    # MESMA seed dos splits/label_desc
     device: str = "cuda"
     tag: str = "dense"
+    resume: bool = True               # pula fold cujo run .trec já existe (idempotente)
 
     def fold_out_path(self, fold_id: int) -> str:
         return os.path.join(self.runs_dir, self.out_template.format(fold=fold_id))
@@ -464,10 +468,15 @@ def infer_fold(
     return rank_per_class(text_rpr, query_ids, label_rpr, label_ids, head, tail, cfg.num_labels)
 
 
-def run_cv(cfg: DenseConfig | None = None) -> None:
+def run_cv(cfg: DenseConfig | None = None, only_fold: int | None = None) -> None:
     """Protocolo oficial: 5-fold CV sobre o dataset agrupado. Por fold: resolve o
     texto dos rótulos (RAG-labels do fold se LLM), treina o bi-encoder no corpus do
-    fold, infere nas queries do fold e escreve runs/dense.fold{f}.trec."""
+    fold, infere nas queries do fold e escreve runs/dense.fold{f}.trec.
+
+    Resume-safe: com cfg.resume, pula fold cujo .trec já existe (o run só é gravado
+    ao FIM do fold, então um fold interrompido é refeito por inteiro — sem meio-termo
+    corrompido). `only_fold` roda apenas aquele fold (resume direcionado / paralelizar
+    folds em GPUs distintas)."""
     cfg = cfg or DenseConfig()
     pooled = load_pooled(cfg.raw_dir)
     label_vocab = _read_lines(os.path.join(cfg.raw_dir, "Y.txt"))
@@ -482,11 +491,20 @@ def run_cv(cfg: DenseConfig | None = None) -> None:
         f"agrupado: {len(pooled)} docs | rótulos: {pooled.n_labels} "
         f"| cabeça: {len(head)} | cauda: {len(tail)} (global, Pareto) "
         f"| {cfg.n_folds}-fold (seed={cfg.seed}) | enhancement: {cfg.label_enhancement} "
-        f"| modelo: {cfg.architecture}"
+        f"| modelo: {cfg.architecture} | device: {cfg.device}"
+        + (f" | só fold {only_fold}" if only_fold is not None else "")
     )
 
     folds = make_folds(len(pooled), k=cfg.n_folds, seed=cfg.seed)
     for fold in folds:
+        if only_fold is not None and fold.fold_id != only_fold:
+            continue
+        out_path = cfg.fold_out_path(fold.fold_id)
+        if cfg.resume and os.path.exists(out_path):
+            print(f"\n── fold {fold.fold_id}: {out_path} já existe — pulando "
+                  f"(resume; use --no-resume p/ refazer)")
+            continue
+
         print(f"\n── fold {fold.fold_id}: corpus {len(fold.train_idx)} | queries {len(fold.test_idx)} ──")
         descriptions = load_fold_descriptions(cfg, fold.fold_id)
         label_texts = resolve_label_texts(label_vocab, descriptions, cfg.label_enhancement)
@@ -494,13 +512,28 @@ def run_cv(cfg: DenseConfig | None = None) -> None:
         encoder, tokenizer = train_fold(fold, pooled, label_texts, relevance_map, cfg)
         runs = infer_fold(encoder, tokenizer, fold, pooled, label_texts, head, tail, cfg)
 
-        out_path = cfg.fold_out_path(fold.fold_id)
         write_trec(runs, out_path, cfg.tag)
         print(f"run TREC salvo em {out_path} ({len(runs)} queries)")
 
 
 def main(cfg: DenseConfig | None = None) -> None:
-    run_cv(cfg)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Recuperador denso (bi-encoder, 5-fold CV)")
+    parser.add_argument("--fold", type=int, default=None,
+                        help="roda só este fold (resume direcionado / paralelizar GPUs)")
+    parser.add_argument("--device", type=str, default=None,
+                        help="override do device (ex.: cuda:1)")
+    parser.add_argument("--no-resume", action="store_true",
+                        help="refaz folds mesmo que o .trec já exista")
+    args, _ = parser.parse_known_args()
+
+    cfg = cfg or DenseConfig()
+    if args.device:
+        cfg.device = args.device
+    if args.no_resume:
+        cfg.resume = False
+    run_cv(cfg, only_fold=args.fold)
 
 
 if __name__ == "__main__":
