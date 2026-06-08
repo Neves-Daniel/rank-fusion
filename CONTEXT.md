@@ -110,8 +110,12 @@ Eurlex-4K (validação inicial, já baixado) → Wiki10-31K → AmazonCat-13K �
   CombMNZ e RRF reimplementados à mão e validados contra o ranx (igualdade de ordem).
   `run_cv` funde o melhor par por fold; `run_grid` funde as 98 combinações. 14 testes
   CPU verdes. Insumo do grid search. Import do ranx é lazy.
-- ⬜ Métricas e grid search: a fazer.
-  - Métricas escolhidas: P@k/nDCG@k **segmentados cabeça/cauda** (p/ bater com Tabela 2) +
-    PSP@k/PSnDCG@k como extensão do projeto. O artigo NÃO usa PSP.
+- ✅ **Métricas implementadas** (`src/metrics.py`): P@k/nDCG@k/Recall@k (k∈{1,5,10}) via
+  ranx, **segmentados overall/cabeça/cauda** (restringe ranking E gold ao segmento),
+  por fold + média±desvio entre folds. `run_report` compara sparse, dense e o melhor
+  par fundido. 10 testes CPU verdes (valores conferidos na mão). Import do ranx lazy.
+  PSP@k/PSnDCG@k (extensão) ainda a fazer.
+- ⬜ Grid search (varre as 98 combinações × folds, avalia com metrics, seleciona) e
+  PSP@k/PSnDCG@k: a fazer.
 - ⏳ Falta rodar o esparso completo na Brev (`python -m src.retrieve_sparse`, 5 folds) →
   `runs/sparse.fold{0..4}.trec`.

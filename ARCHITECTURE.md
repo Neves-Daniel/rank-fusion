@@ -15,7 +15,7 @@ rank-fusion/
 │  ├─ prompts/           # templates de prompt (label_desc_prompt.txt, verbatim RAG-Fuse)
 │  ├─ retrieve_dense.py  # denso: bi-encoder BERT fine-tuned (label-as-document) -> run TREC (feito)
 │  ├─ fusion.py          # wrappers ranx (6 norm × 10 fusão) + CombMNZ/RRF próprios (feito)
-│  ├─ metrics.py         # P@k, nDCG@k, PSP@k, split head/tail   (a fazer)
+│  ├─ metrics.py         # P@k/nDCG@k/Recall@k segmentados cabeça/cauda via ranx (feito; PSP a fazer)
 │  └─ gridsearch.py      # (fusão × normalização) sobre runs     (a fazer)
 ├─ configs/        # 1 arquivo por experimento (pares fusão×norm, k, etc.)
 ├─ data/<dataset>/
