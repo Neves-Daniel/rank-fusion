@@ -36,6 +36,28 @@ head labels.
   iterar fusão offline).
 - Adicionar dependências pesadas sem confirmar com o usuário.
 
+## Execução (Brev/Docker)
+Os experimentos pesados (treino do denso, geração das RAG-labels) rodam na **máquina
+do lab via Brev** (GPU A100-80GB), **não** na WSL local (fraca). O Claude escreve o
+código/comandos local; o Daniel cola no terminal da Brev (sem SSH direto). Sincronização
+local→Brev via GitHub: `commit/push` local → `git pull` na Brev.
+
+**Comando padrão para abrir o container** (rodar antes um `tmux` no HOST, pra a queda
+de SSH não matar o processo):
+```bash
+tmux new -s denso          # no host; reanexar: tmux attach -t denso
+docker run -it --rm --gpus '"device=3"' --cpus="16" --memory="32g" \
+  -v /data/dupla_xmtc:/workspace -w /workspace/rank-fusion rank-fusion:latest bash
+```
+Dentro do container (efêmero `--rm`): reinstalar a dep nova e atualizar o código:
+```bash
+pip install pytorch-metric-learning "numpy<2"   # numpy<2: senão quebra retriv/xclib
+git pull
+```
+- Daniel usa **device 3**; imagem própria `rank-fusion:latest` (build do `Dockerfile`).
+- Dados/artefatos persistem no disco do host em `/data/dupla_xmtc/...` (montado), não
+  no container. Testes CPU (`pytest`) rodam local sem GPU.
+
 ## Stack
 Ver TECH_STACK.md. Arquitetura e formatos: ARCHITECTURE.md.
 
