@@ -148,7 +148,10 @@ def aggregate(per_fold: list[dict[str, float]]) -> dict[str, tuple[float, float]
     out: dict[str, tuple[float, float]] = {}
     for key in keys:
         vals = np.array([pf[key] for pf in per_fold], dtype=float)
-        out[key] = (float(np.nanmean(vals)), float(np.nanstd(vals)))
+        if np.all(np.isnan(vals)):     # segmento sem gold em todos os folds (degenerado)
+            out[key] = (float("nan"), float("nan"))
+        else:
+            out[key] = (float(np.nanmean(vals)), float(np.nanstd(vals)))
     return out
 
 

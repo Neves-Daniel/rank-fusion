@@ -16,7 +16,7 @@ rank-fusion/
 │  ├─ retrieve_dense.py  # denso: bi-encoder BERT fine-tuned (label-as-document) -> run TREC (feito)
 │  ├─ fusion.py          # wrappers ranx (6 norm × 10 fusão) + CombMNZ/RRF próprios (feito)
 │  ├─ metrics.py         # P@k/nDCG@k/Recall@k segmentados cabeça/cauda via ranx (feito; PSP a fazer)
-│  └─ gridsearch.py      # (fusão × normalização) sobre runs     (a fazer)
+│  └─ gridsearch.py      # varre 98 (fusão × norm), avalia segmentado, ranqueia por cauda + CSV (feito)
 ├─ configs/        # 1 arquivo por experimento (pares fusão×norm, k, etc.)
 ├─ data/<dataset>/
 │  ├─ raw/         # arquivos baixados (NÃO versionar — ver .claudeignore/.gitignore)

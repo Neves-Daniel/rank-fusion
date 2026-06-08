@@ -115,7 +115,14 @@ Eurlex-4K (validação inicial, já baixado) → Wiki10-31K → AmazonCat-13K �
   por fold + média±desvio entre folds. `run_report` compara sparse, dense e o melhor
   par fundido. 10 testes CPU verdes (valores conferidos na mão). Import do ranx lazy.
   PSP@k/PSnDCG@k (extensão) ainda a fazer.
-- ⬜ Grid search (varre as 98 combinações × folds, avalia com metrics, seleciona) e
-  PSP@k/PSnDCG@k: a fazer.
+- ✅ **Grid search implementado** (`src/gridsearch.py`): varre as 98 combinações
+  (norm × fusão), funde em memória (runs base carregados 1×), avalia segmentado e
+  ranqueia por uma métrica de cauda (default tail nDCG@5); imprime top-N + posição do
+  CombMNZ+ZMUV e salva CSV long-format. Modo `--paper` (só 6×10), `--select seg:metrica`.
+  7 testes CPU verdes. Reusa fusion.py + metrics.py.
+- 📊 **Primeiros números (Eurlex-4K, CombMNZ+ZMUV)**: fusão > denso > esparso em tudo;
+  ganho na CAUDA desproporcional (tail P@1 0.39→0.46, tail nDCG@5 0.45→0.52 vs denso;
+  +15–17%) sem prejudicar a cabeça (+1–4%). Replica o achado do artigo.
+- ⬜ PSP@k/PSnDCG@k (extensão, via pyxclib ou à mão): a fazer.
 - ⏳ Falta rodar o esparso completo na Brev (`python -m src.retrieve_sparse`, 5 folds) →
   `runs/sparse.fold{0..4}.trec`.
