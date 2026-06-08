@@ -60,6 +60,7 @@ class SparseConfig:
     head_frac: float = 0.20    # 20% rótulos mais frequentes = cabeça (Pareto)
     n_folds: int = 5           # k da validação cruzada (artigo: 5-fold CV)
     seed: int = 42             # semente da atribuição de folds (reprodutibilidade)
+    resume: bool = True        # pula fold cujo .trec já existe (resume-safe; ver run_cv)
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
     tag: str = "bm25"
@@ -246,14 +247,23 @@ def run_single_split(cfg: SparseConfig | None = None) -> None:
     print(f"run TREC salvo em {cfg.out_path} ({len(runs)} queries)")
 
 
-def run_cv(cfg: SparseConfig | None = None) -> None:
+def run_cv(cfg: SparseConfig | None = None, only_fold: int | None = None) -> None:
     """Protocolo oficial: 5-fold CV sobre o dataset agrupado (treino+teste).
 
     Para cada fold, indexa o corpus (4/5 dos docs) com BM25, usa o 1/5 restante
     como queries e escreve um run TREC por fold (qid = índice GLOBAL do doc, ver
     src/splits.py). A partição cabeça/cauda é GLOBAL (frequências sobre os N docs
     agrupados), fiel à definição do artigo.
+
+    Resume-safe e isolável por fold (`only_fold`): com corpora grandes (ex.: Wiki10,
+    texto integral), rodar os 5 folds num único processo acumula memória entre folds
+    (objetos do retriv, page cache contra o limite do cgroup) e pode estourar o OOM já
+    na indexação de um fold tardio. Rodar 1 fold por processo (`--fold N`) garante que
+    o SO recupera tudo ao sair; `resume` pula folds cujo `.trec` já existe. Mesmo no
+    modo todos-os-folds, liberamos o índice e damos gc.collect() a cada iteração.
     """
+    import gc
+
     cfg = cfg or SparseConfig()
     pooled = load_pooled(cfg.raw_dir)
 
@@ -264,6 +274,14 @@ def run_cv(cfg: SparseConfig | None = None) -> None:
 
     folds = make_folds(len(pooled), k=cfg.n_folds, seed=cfg.seed)
     for fold in folds:
+        if only_fold is not None and fold.fold_id != only_fold:
+            continue
+
+        out_path = cfg.fold_out_path(fold.fold_id)
+        if cfg.resume and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            print(f"\n── fold {fold.fold_id}: já existe {out_path} — pulando (resume) ──")
+            continue
+
         corpus_texts = [pooled.texts[i] for i in fold.train_idx]
         corpus_cols = [pooled.label_cols[i] for i in fold.train_idx]
         query_texts = [pooled.texts[i] for i in fold.test_idx]
@@ -273,9 +291,11 @@ def run_cv(cfg: SparseConfig | None = None) -> None:
         sr = build_index(corpus_texts, cfg)
         runs = retrieve(sr, query_texts, corpus_cols, head, tail, cfg, query_ids=query_ids)
 
-        out_path = cfg.fold_out_path(fold.fold_id)
         write_trec(runs, out_path, cfg.tag)
         print(f"run TREC salvo em {out_path} ({len(runs)} queries)")
+
+        del sr, runs, corpus_texts, corpus_cols, query_texts   # libera entre folds
+        gc.collect()
 
 
 def main(cfg: SparseConfig | None = None) -> None:
@@ -285,11 +305,17 @@ def main(cfg: SparseConfig | None = None) -> None:
 
     parser = argparse.ArgumentParser(description="Recuperador esparso (BM25 kNN, 5-fold CV)")
     add_dataset_arg(parser)
+    parser.add_argument("--fold", type=int, default=None,
+                        help="roda só este fold (isolamento de memória / paralelizar)")
+    parser.add_argument("--no-resume", action="store_true",
+                        help="refaz o fold mesmo que o .trec já exista")
     args, _ = parser.parse_known_args()
 
     cfg = cfg or SparseConfig()
     apply_dataset(cfg, args.dataset)
-    run_cv(cfg)
+    if args.no_resume:
+        cfg.resume = False
+    run_cv(cfg, only_fold=args.fold)
 
 
 if __name__ == "__main__":
