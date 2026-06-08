@@ -378,6 +378,16 @@ def run_cv(cfg: LabelDescConfig | None = None) -> None:
 
 
 def main(cfg: LabelDescConfig | None = None) -> None:
+    import argparse
+
+    from src.data import add_dataset_arg, apply_dataset
+
+    parser = argparse.ArgumentParser(description="RAG-labels: descrição de rótulo via LLM, por fold")
+    add_dataset_arg(parser)
+    args, _ = parser.parse_known_args()
+
+    cfg = cfg or LabelDescConfig()
+    apply_dataset(cfg, args.dataset)
     run_cv(cfg)
 
 

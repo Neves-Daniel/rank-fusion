@@ -251,8 +251,18 @@ def run_grid(cfg: FusionConfig | None = None) -> None:
 
 
 def main() -> None:
+    import argparse
+
+    from src.data import add_dataset_arg, apply_dataset
+
+    parser = argparse.ArgumentParser(description="Fusão dos runs base (norm × método)")
+    add_dataset_arg(parser)
+    parser.add_argument("--grid", action="store_true", help="funde as combinações do grid")
+    args, _ = parser.parse_known_args()
+
     cfg = FusionConfig()
-    if "--grid" in sys.argv:
+    apply_dataset(cfg, args.dataset)
+    if args.grid:
         run_grid(cfg)
     else:
         run_cv(cfg)

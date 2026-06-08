@@ -279,6 +279,16 @@ def run_cv(cfg: SparseConfig | None = None) -> None:
 
 
 def main(cfg: SparseConfig | None = None) -> None:
+    import argparse
+
+    from src.data import add_dataset_arg, apply_dataset
+
+    parser = argparse.ArgumentParser(description="Recuperador esparso (BM25 kNN, 5-fold CV)")
+    add_dataset_arg(parser)
+    args, _ = parser.parse_known_args()
+
+    cfg = cfg or SparseConfig()
+    apply_dataset(cfg, args.dataset)
     run_cv(cfg)
 
 

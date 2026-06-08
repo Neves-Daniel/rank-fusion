@@ -8,13 +8,47 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
+from dataclasses import dataclass
+
 from src.data import (
     Dataset,
     Split,
     _labels_from_matrix,
+    apply_dataset,
+    dataset_paths,
     dataset_stats,
     load_dataset,
 )
+
+
+def test_dataset_paths_follow_convention():
+    p = dataset_paths("wiki10-31k")
+    assert p == {
+        "raw_dir": "data/wiki10-31k/raw",
+        "runs_dir": "data/wiki10-31k/runs",
+        "rag_labels_dir": "data/wiki10-31k/rag-labels",
+        "results_dir": "data/wiki10-31k/results",
+    }
+
+
+def test_apply_dataset_overrides_only_known_fields():
+    @dataclass
+    class _Cfg:
+        raw_dir: str = "data/eurlex4k/raw"
+        runs_dir: str = "data/eurlex4k/runs"
+        out_dir: str = "data/eurlex4k/rag-labels"      # estilo label_desc
+        out_path: str = "data/eurlex4k/runs/sparse.trec"
+        out_csv: str = "data/eurlex4k/results/gridsearch.csv"
+        unrelated: int = 7
+
+    cfg = _Cfg()
+    apply_dataset(cfg, "wiki10-31k")
+    assert cfg.raw_dir == "data/wiki10-31k/raw"
+    assert cfg.runs_dir == "data/wiki10-31k/runs"
+    assert cfg.out_dir == "data/wiki10-31k/rag-labels"
+    assert cfg.out_path == "data/wiki10-31k/runs/sparse.trec"
+    assert cfg.out_csv == "data/wiki10-31k/results/gridsearch.csv"
+    assert cfg.unrelated == 7  # não mexe no que não é caminho
 
 
 def _write_dataset(raw_dir, vocab, trn_texts, tst_texts, Ytrn, Ytst):
@@ -58,7 +92,7 @@ def test_load_dataset_roundtrip(tmp_path):
 
 
 def test_load_dataset_missing_file_raises(tmp_path):
-    with pytest.raises(FileNotFoundError, match="download_eurlex"):
+    with pytest.raises(FileNotFoundError, match="download_"):
         load_dataset(str(tmp_path))  # diretório vazio: falta Y.txt
 
 

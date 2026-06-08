@@ -51,6 +51,13 @@ cabeça/cauda definida globalmente (Pareto 80/20). Ver ARCHITECTURE.md.
   split e rótulos diferentes → fora de escopo, quebraria a comparabilidade.
 - Rótulos nunca vistos no teste: tratados normalmente (recuperação pode não os
   alcançar; isso é esperado e medido pelas métricas).
+- Texto por dataset NÃO é homogêneo: o Eurlex-4K vem stemizado/sem-stopwords; o
+  Wiki10-31K (PECOS xmc-base) vem em PALAVRAS INTEIRAS e com documentos bem mais
+  longos (artigos da Wikipédia). Consequência: a justificativa "denso usa texto
+  stemizado por fidelidade ao baseline" é específica do Eurlex; no Wiki10 o denso
+  recebe texto melhor (positivo), mas o truncamento a 512 wordpieces passa a descartar
+  proporcionalmente mais conteúdo (ameaça à validade no Wiki10). Registrar por dataset,
+  não assumir o pré-processamento de um para o outro.
 
 ## Fora de escopo (v1)
 - Datasets além dos 4 listados.

@@ -198,7 +198,10 @@ def save_csv(ranked: list[dict], cfg: GridConfig) -> None:
 def main(cfg: GridConfig | None = None) -> None:
     import argparse
 
+    from src.data import add_dataset_arg, apply_dataset
+
     parser = argparse.ArgumentParser(description="Grid search da fusão (norm × método)")
+    add_dataset_arg(parser)
     parser.add_argument("--select", type=str, default=None,
                         help="métrica de seleção no formato segmento:metrica (ex.: tail:ndcg@5)")
     parser.add_argument("--paper", action="store_true",
@@ -207,6 +210,7 @@ def main(cfg: GridConfig | None = None) -> None:
     args, _ = parser.parse_known_args()
 
     cfg = cfg or GridConfig()
+    apply_dataset(cfg, args.dataset)
     if args.paper:
         cfg.norms, cfg.methods = PAPER_NORMS, PAPER_METHODS
     if args.select:

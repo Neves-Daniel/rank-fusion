@@ -528,18 +528,27 @@ def run_cv(cfg: DenseConfig | None = None, only_fold: int | None = None) -> None
 def main(cfg: DenseConfig | None = None) -> None:
     import argparse
 
+    from src.data import add_dataset_arg, apply_dataset
+
     parser = argparse.ArgumentParser(description="Recuperador denso (bi-encoder, 5-fold CV)")
+    add_dataset_arg(parser)
     parser.add_argument("--fold", type=int, default=None,
                         help="roda só este fold (resume direcionado / paralelizar GPUs)")
     parser.add_argument("--device", type=str, default=None,
                         help="override do device (ex.: cuda:1)")
+    parser.add_argument("--label-enhancement", type=str, default=None,
+                        choices=["LLM", "NONE"],
+                        help="LLM = descrições RAG-labels; NONE = só o nome cru do rótulo")
     parser.add_argument("--no-resume", action="store_true",
                         help="refaz folds mesmo que o .trec já exista")
     args, _ = parser.parse_known_args()
 
     cfg = cfg or DenseConfig()
+    apply_dataset(cfg, args.dataset)
     if args.device:
         cfg.device = args.device
+    if args.label_enhancement:
+        cfg.label_enhancement = args.label_enhancement
     if args.no_resume:
         cfg.resume = False
     run_cv(cfg, only_fold=args.fold)

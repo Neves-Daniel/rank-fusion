@@ -6,7 +6,8 @@ rank-fusion/
 ├─ CLAUDE.md, TECH_STACK.md, ARCHITECTURE.md, REQUIREMENTS.md   # âncoras
 ├─ requirements.txt
 ├─ scripts/        # download e utilitários de linha de comando
-│  └─ download_eurlex.sh
+│  ├─ download_eurlex.sh
+│  └─ download_wiki10.sh   # Wiki10-31K via PECOS xmc-base (archive.org) → layout do data.py
 ├─ src/
 │  ├─ data.py            # carregar datasets (formato PECOS) -> Dataset/Split
 │  ├─ splits.py          # 5-fold CV sobre dataset agrupado (treino+teste)      (feito)
@@ -24,6 +25,13 @@ rank-fusion/
 │  └─ runs/        # run files TREC gerados pelos recuperadores
 └─ notebooks/      # análise exploratória
 ```
+
+## Multi-dataset (`--dataset`)
+Todos os CLIs aceitam `--dataset <nome>` (default `eurlex4k`), que aponta os caminhos
+para `data/<nome>/{raw,runs,rag-labels,results}` via `data.dataset_paths`/`apply_dataset`.
+Cada dataset tem seu próprio script de download em `scripts/`. Exemplos:
+`python -m src.retrieve_sparse --dataset wiki10-31k`,
+`python -m src.retrieve_dense --dataset wiki10-31k --label-enhancement NONE`.
 
 ## Protocolo de avaliação: 5-fold CV (fiel ao artigo)
 A avaliação é **5-fold cross-validation sobre o dataset AGRUPADO** (treino+teste),

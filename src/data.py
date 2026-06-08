@@ -41,10 +41,57 @@ class Dataset:
     label_vocab: list[str]           # linha i = rótulo da coluna i em Y
 
 
+def dataset_paths(name: str) -> dict[str, str]:
+    """Caminhos canônicos de um dataset em ``data/<name>/`` (multi-dataset).
+
+    Mantém a convenção usada em todo o pipeline: ``raw/`` (insumos baixados),
+    ``runs/`` (runs TREC), ``rag-labels/`` (descrições por fold) e ``results/``.
+    """
+    base = f"data/{name}"
+    return {
+        "raw_dir": f"{base}/raw",
+        "runs_dir": f"{base}/runs",
+        "rag_labels_dir": f"{base}/rag-labels",
+        "results_dir": f"{base}/results",
+    }
+
+
+def apply_dataset(cfg, name: str) -> None:
+    """Aponta os caminhos de uma config (dataclass) para ``data/<name>/...``.
+
+    Sobrescreve só os atributos que a config tiver — cada módulo nomeia seus
+    paths de um jeito (``out_dir`` no label_desc, ``out_csv`` no gridsearch etc.),
+    então cobrimos os nomes conhecidos sem acoplar a uma config específica.
+    Atenção: só toca atributos que JÁ são string — alguns nomes (ex.: ``out_path``
+    na FusionConfig) são MÉTODOS, e não podem ser clobberados com um caminho.
+    """
+    p = dataset_paths(name)
+    overrides = {
+        "raw_dir": p["raw_dir"],
+        "runs_dir": p["runs_dir"],
+        "rag_labels_dir": p["rag_labels_dir"],
+        "out_dir": p["rag_labels_dir"],                # label_desc: rag-labels
+        "out_path": f"{p['runs_dir']}/sparse.trec",    # sparse: modo single-split (legado)
+        "out_csv": f"{p['results_dir']}/gridsearch.csv",  # gridsearch
+    }
+    for attr, value in overrides.items():
+        if isinstance(getattr(cfg, attr, None), str):  # ignora métodos/ausentes
+            setattr(cfg, attr, value)
+
+
+def add_dataset_arg(parser, default: str = "eurlex4k") -> None:
+    """Adiciona ``--dataset`` ao argparse de um CLI (default mantém retrocompat)."""
+    parser.add_argument(
+        "--dataset", type=str, default=default,
+        help="nome do dataset em data/<nome>/ (default: eurlex4k)",
+    )
+
+
 def _read_lines(path: str) -> list[str]:
     if not os.path.exists(path):
         raise FileNotFoundError(
-            f"Arquivo não encontrado: {path}\nRode antes: bash scripts/download_eurlex.sh"
+            f"Arquivo não encontrado: {path}\n"
+            f"Rode antes o script de download do dataset (scripts/download_*.sh)"
         )
     with open(path, encoding="utf-8") as fh:
         return [line.rstrip("\n") for line in fh]

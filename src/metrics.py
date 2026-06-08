@@ -227,6 +227,16 @@ def run_report(cfg: MetricsConfig | None = None) -> None:
 
 
 def main(cfg: MetricsConfig | None = None) -> None:
+    import argparse
+
+    from src.data import add_dataset_arg, apply_dataset
+
+    parser = argparse.ArgumentParser(description="Avaliação segmentada (overall/cabeça/cauda)")
+    add_dataset_arg(parser)
+    args, _ = parser.parse_known_args()
+
+    cfg = cfg or MetricsConfig()
+    apply_dataset(cfg, args.dataset)
     run_report(cfg)
 
 

@@ -66,8 +66,11 @@ Eurlex-4K (validação inicial, já baixado) → Wiki10-31K → AmazonCat-13K �
 - **RAG-labels (SBBD 2025):** https://sol.sbc.org.br/index.php/sbbd/article/view/37243
 
 ## Acesso rápido (dados e ferramentas)
-- **Dados no disco:** `data/eurlex4k/raw/` (texto + matrizes de rótulos, formato PECOS).
-  Recarregar/baixar: `bash scripts/download_eurlex.sh`.
+- **Dados no disco:** `data/<dataset>/raw/` (texto + matrizes de rótulos, formato PECOS).
+  Eurlex-4K: `bash scripts/download_eurlex.sh` (espelho thekop79). Wiki10-31K:
+  `bash scripts/download_wiki10.sh` (PECOS xmc-base via archive.org — não há espelho
+  drop-in; o script baixa o tarball e renomeia para o layout do data.py).
+  Pipeline é multi-dataset: todo CLI aceita `--dataset <nome>` (default `eurlex4k`).
 - **Carregar em Python:** `from src.data import load_dataset; ds = load_dataset("data/eurlex4k/raw")`
   (ver `python src/data.py` para um resumo/estatísticas do dataset).
 - **Espelho dos dados (Eurlex-4K, com texto):** https://huggingface.co/datasets/thekop79/EURLex-4K
@@ -126,3 +129,11 @@ Eurlex-4K (validação inicial, já baixado) → Wiki10-31K → AmazonCat-13K �
 - ⬜ PSP@k/PSnDCG@k (extensão, via pyxclib ou à mão): a fazer.
 - ⏳ Falta rodar o esparso completo na Brev (`python -m src.retrieve_sparse`, 5 folds) →
   `runs/sparse.fold{0..4}.trec`.
+- ✅ **Pipeline multi-dataset** (2026-06-08): `data.dataset_paths`/`apply_dataset` +
+  flag `--dataset` em todos os CLIs (default `eurlex4k`, retrocompat). 95 testes CPU verdes.
+- 🚧 **Escalando para Wiki10-31K** (2026-06-08): `scripts/download_wiki10.sh` (PECOS
+  xmc-base/archive.org → layout do data.py). Esperado: ~14.146 treino / ~6.616 teste /
+  30.938 rótulos. Texto = artigos da Wikipédia em palavras INTEIRAS (não stemizado,
+  ao contrário do Eurlex) e mais longos. Decisão: denso começa com RAG-labels OFF
+  (`--label-enhancement NONE`) — 31k rótulos × 5 folds de LLM é caro; RAG-labels fica
+  para 2ª passada. Próximo: baixar/validar na Brev → esparso 5 folds.
