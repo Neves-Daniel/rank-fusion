@@ -17,6 +17,22 @@ DEST="data/wiki10-31k/raw"
 TARURL="https://archive.org/download/pecos-dataset/xmc-base/wiki10-31k.tar.gz"
 TMP="data/wiki10-31k/_dl"
 
+# baixa URL -> arquivo de saída, usando o que estiver disponível (o container da Brev
+# não tem curl; wget ou python sempre existem)
+fetch() {
+    local url="$1" out="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fSL --retry 3 -o "$out" "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -O "$out" "$url"
+    else
+        python - "$url" "$out" <<'PY'
+import sys, urllib.request
+urllib.request.urlretrieve(sys.argv[1], sys.argv[2])
+PY
+    fi
+}
+
 mkdir -p "$DEST" "$TMP"
 
 # já convertido? então nada a fazer
@@ -29,7 +45,7 @@ fi
 TARBALL="$TMP/wiki10-31k.tar.gz"
 if [ ! -s "$TARBALL" ]; then
     echo ">> Baixando wiki10-31k.tar.gz do xmc-base (archive.org) ..."
-    curl -fSL --retry 3 -o "$TARBALL" "$TARURL"
+    fetch "$TARURL" "$TARBALL"
 fi
 
 echo ">> Extraindo ..."
