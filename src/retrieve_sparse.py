@@ -307,12 +307,17 @@ def main(cfg: SparseConfig | None = None) -> None:
     add_dataset_arg(parser)
     parser.add_argument("--fold", type=int, default=None,
                         help="roda só este fold (isolamento de memória / paralelizar)")
+    parser.add_argument("--query-batch-size", type=int, default=None,
+                        help="queries por lote no bsearch; menor = menos pico de memória "
+                             "(ex.: 16 em datasets grandes tipo AmazonCat)")
     parser.add_argument("--no-resume", action="store_true",
                         help="refaz o fold mesmo que o .trec já exista")
     args, _ = parser.parse_known_args()
 
     cfg = cfg or SparseConfig()
     apply_dataset(cfg, args.dataset)
+    if args.query_batch_size:
+        cfg.query_batch_size = args.query_batch_size
     if args.no_resume:
         cfg.resume = False
     run_cv(cfg, only_fold=args.fold)
