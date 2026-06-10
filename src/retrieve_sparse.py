@@ -99,13 +99,23 @@ def head_tail_split(
     return head, tail
 
 
-def build_index(train_texts: list[str], cfg: SparseConfig):
-    """Indexa os documentos de treino com BM25 (retriv), replicando o RAG-Fuse."""
+def build_index(train_texts: list[str], cfg: SparseConfig, index_tag: str | None = None):
+    """Indexa os documentos de treino com BM25 (retriv), replicando o RAG-Fuse.
+
+    `index_tag` isola o store do retriv (base_path + nome do índice) por processo —
+    obrigatório para rodar folds EM PARALELO: sem isso todos usariam o mesmo
+    `data/.retriv`/`xmtc_sparse` e se sobrescreveriam (cada build faz delete+rebuild).
+    Em datasets grandes (AmazonCat) rodar os folds concorrentes corta o wall-clock.
+    """
     from retriv import SparseRetriever, set_base_path
 
-    set_base_path(cfg.retriv_base_path)
-
+    base_path = cfg.retriv_base_path
     index_name = "xmtc_sparse"
+    if index_tag:
+        base_path = os.path.join(base_path, index_tag)
+        index_name = f"xmtc_sparse_{index_tag}"
+    set_base_path(base_path)
+
     try:
         SparseRetriever.delete(index_name)            # idempotência / reprodutibilidade
     except Exception:
@@ -288,7 +298,7 @@ def run_cv(cfg: SparseConfig | None = None, only_fold: int | None = None) -> Non
         query_ids = [str(int(i)) for i in fold.test_idx]   # índice GLOBAL agrupado
 
         print(f"\n── fold {fold.fold_id}: corpus {len(corpus_texts)} | queries {len(query_texts)} ──")
-        sr = build_index(corpus_texts, cfg)
+        sr = build_index(corpus_texts, cfg, index_tag=f"fold{fold.fold_id}")
         runs = retrieve(sr, query_texts, corpus_cols, head, tail, cfg, query_ids=query_ids)
 
         write_trec(runs, out_path, cfg.tag)
