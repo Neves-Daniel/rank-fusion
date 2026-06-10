@@ -87,6 +87,27 @@ def add_dataset_arg(parser, default: str = "eurlex4k") -> None:
     )
 
 
+def add_folds_arg(parser) -> None:
+    """Adiciona ``--folds`` (subconjunto de folds a avaliar/fundir, ex.: ``0,1,2``).
+
+    NÃO muda a partição (que é k=n_folds, congelada nos próprios runs `.trec`): só
+    seleciona QUAIS folds entram na média de CV. Útil para datasets grandes onde se
+    roda 3 dos 5 folds por orçamento de compute (mantendo treino 4/5, fiel ao artigo).
+    """
+    parser.add_argument(
+        "--folds", type=str, default=None,
+        help="subconjunto de folds, ex.: 0,1,2 (default: todos os n_folds). "
+             "Não altera a partição k=n_folds — só quais folds entram na média.",
+    )
+
+
+def parse_folds(s: str | None) -> tuple[int, ...] | None:
+    """``"0,1,2"`` → ``(0, 1, 2)``; ``None``/vazio → ``None`` (= todos os folds)."""
+    if not s:
+        return None
+    return tuple(int(x) for x in s.split(",") if x.strip() != "")
+
+
 def _read_lines(path: str) -> list[str]:
     if not os.path.exists(path):
         raise FileNotFoundError(

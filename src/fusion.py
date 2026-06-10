@@ -94,6 +94,10 @@ class FusionConfig:
     rbc_phi: float = 0.8       # φ do RBC (rank-biased centroids)
     gmnz_gamma: float = 2.0    # γ do GMNZ (CombMNZ generalizado)
     n_folds: int = 5
+    folds: tuple[int, ...] | None = None   # None = todos; subconjunto p/ "3 dos 5 folds"
+
+    def fold_ids(self) -> tuple[int, ...]:
+        return self.folds if self.folds is not None else tuple(range(self.n_folds))
 
     def sparse_path(self, fold_id: int) -> str:
         return os.path.join(self.runs_dir, self.sparse_template.format(fold=fold_id))
@@ -229,8 +233,9 @@ def fuse_fold(cfg: FusionConfig, fold_id: int, norm: str, method: str) -> str:
 def run_cv(cfg: FusionConfig | None = None) -> None:
     """Funde o par (cfg.norm, cfg.method) — default CombMNZ+ZMUV — nos N folds."""
     cfg = cfg or FusionConfig()
-    print(f"fusão: {cfg.method} × {cfg.norm} | {cfg.n_folds} folds")
-    for f in range(cfg.n_folds):
+    fold_ids = cfg.fold_ids()
+    print(f"fusão: {cfg.method} × {cfg.norm} | folds {list(fold_ids)}")
+    for f in fold_ids:
         out = fuse_fold(cfg, f, cfg.norm, cfg.method)
         print(f"  fold {f}: {out}")
 
@@ -239,29 +244,32 @@ def run_grid(cfg: FusionConfig | None = None) -> None:
     """Funde TODAS as 60 combinações (6 norm × 10 fusão) em todos os folds.
     Insumo do gridsearch.py (que avaliará cada run fundido com metrics.py)."""
     cfg = cfg or FusionConfig()
-    total = len(NORMS) * len(METHODS) * cfg.n_folds
-    print(f"grid de fusão: {len(NORMS)} norm × {len(METHODS)} fusão × {cfg.n_folds} folds = {total} runs")
+    fold_ids = cfg.fold_ids()
+    total = len(NORMS) * len(METHODS) * len(fold_ids)
+    print(f"grid de fusão: {len(NORMS)} norm × {len(METHODS)} fusão × {len(fold_ids)} folds = {total} runs")
     done = 0
     for norm in NORMS:
         for method in METHODS:
-            for f in range(cfg.n_folds):
+            for f in fold_ids:
                 fuse_fold(cfg, f, norm, method)
                 done += 1
-        print(f"  {norm}: {len(METHODS) * cfg.n_folds} runs ({done}/{total})")
+        print(f"  {norm}: {len(METHODS) * len(fold_ids)} runs ({done}/{total})")
 
 
 def main() -> None:
     import argparse
 
-    from src.data import add_dataset_arg, apply_dataset
+    from src.data import add_dataset_arg, add_folds_arg, apply_dataset, parse_folds
 
     parser = argparse.ArgumentParser(description="Fusão dos runs base (norm × método)")
     add_dataset_arg(parser)
+    add_folds_arg(parser)
     parser.add_argument("--grid", action="store_true", help="funde as combinações do grid")
     args, _ = parser.parse_known_args()
 
     cfg = FusionConfig()
     apply_dataset(cfg, args.dataset)
+    cfg.folds = parse_folds(args.folds)
     if args.grid:
         run_grid(cfg)
     else:

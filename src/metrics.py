@@ -52,7 +52,11 @@ class MetricsConfig:
     kinds: tuple[str, ...] = ("precision", "ndcg", "recall")  # nomes do ranx
     head_frac: float = 0.20          # Pareto: 20% mais frequentes = cabeça (= sparse/dense)
     n_folds: int = 5
+    folds: tuple[int, ...] | None = None   # None = todos; subconjunto p/ "3 dos 5 folds"
     seed: int = 42                   # (não usado aqui; folds vêm dos qids dos runs)
+
+    def fold_ids(self) -> tuple[int, ...]:
+        return self.folds if self.folds is not None else tuple(range(self.n_folds))
     # par fundido a avaliar por padrão (melhor do artigo)
     norm: str = "zmuv"
     method: str = "combmnz"
@@ -171,7 +175,7 @@ def evaluate_run_set(
     qrels_all = build_qrels(pooled)
     per_fold: dict[str, list[dict[str, float]]] = {s: [] for s in SEGMENTS}
     n_used = 0
-    for f in range(cfg.n_folds):
+    for f in cfg.fold_ids():
         path = os.path.join(cfg.runs_dir, path_template.format(fold=f))
         if not os.path.exists(path):
             print(f"  [aviso] {path} ausente — fold {f} ignorado")
@@ -210,7 +214,7 @@ def run_report(cfg: MetricsConfig | None = None) -> None:
     head, tail = head_tail_split(pooled.label_cols, pooled.n_labels, cfg.head_frac)
     print(
         f"avaliação: {len(pooled)} docs | cabeça {len(head)} / cauda {len(tail)} "
-        f"| k∈{list(cfg.ks)} | métricas: {list(cfg.kinds)} | {cfg.n_folds} folds (média±desvio)"
+        f"| k∈{list(cfg.ks)} | métricas: {list(cfg.kinds)} | folds {list(cfg.fold_ids())} (média±desvio)"
     )
 
     run_sets = {
@@ -229,14 +233,16 @@ def run_report(cfg: MetricsConfig | None = None) -> None:
 def main(cfg: MetricsConfig | None = None) -> None:
     import argparse
 
-    from src.data import add_dataset_arg, apply_dataset
+    from src.data import add_dataset_arg, add_folds_arg, apply_dataset, parse_folds
 
     parser = argparse.ArgumentParser(description="Avaliação segmentada (overall/cabeça/cauda)")
     add_dataset_arg(parser)
+    add_folds_arg(parser)
     args, _ = parser.parse_known_args()
 
     cfg = cfg or MetricsConfig()
     apply_dataset(cfg, args.dataset)
+    cfg.folds = parse_folds(args.folds)
     run_report(cfg)
 
 

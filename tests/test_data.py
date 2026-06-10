@@ -18,7 +18,29 @@ from src.data import (
     dataset_paths,
     dataset_stats,
     load_dataset,
+    parse_folds,
 )
+
+
+def test_parse_folds():
+    assert parse_folds(None) is None
+    assert parse_folds("") is None
+    assert parse_folds("0,1,2") == (0, 1, 2)
+    assert parse_folds("3") == (3,)
+    assert parse_folds("0, 2 ,4") == (0, 2, 4)
+
+
+def test_fold_ids_subset_vs_all():
+    # subconjunto explícito não muda n_folds (= a partição), só quais folds processar
+    from src.fusion import FusionConfig
+    from src.gridsearch import GridConfig
+    from src.metrics import MetricsConfig
+
+    for C in (FusionConfig, MetricsConfig, GridConfig):
+        assert C(n_folds=5).fold_ids() == (0, 1, 2, 3, 4)        # default = todos
+        cfg = C(n_folds=5, folds=(0, 1, 2))
+        assert cfg.fold_ids() == (0, 1, 2)                       # subconjunto
+        assert cfg.n_folds == 5                                  # partição intacta
 
 
 def test_dataset_paths_follow_convention():

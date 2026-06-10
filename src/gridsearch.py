@@ -55,6 +55,7 @@ class GridConfig:
     kinds: tuple[str, ...] = ("precision", "ndcg", "recall")
     head_frac: float = 0.20
     n_folds: int = 5
+    folds: tuple[int, ...] | None = None   # None = todos; subconjunto p/ "3 dos 5 folds"
     # parâmetros das fusões parametrizadas (= FusionConfig)
     rrf_k: int = 60
     rbc_phi: float = 0.8
@@ -67,8 +68,12 @@ class GridConfig:
     norms: tuple[str, ...] = field(default_factory=lambda: tuple(NORMS))
     methods: tuple[str, ...] = field(default_factory=lambda: tuple(METHODS))
 
+    def fold_ids(self) -> tuple[int, ...]:
+        return self.folds if self.folds is not None else tuple(range(self.n_folds))
+
     def metrics_config(self) -> MetricsConfig:
-        return MetricsConfig(ks=self.ks, kinds=self.kinds, head_frac=self.head_frac, n_folds=self.n_folds)
+        return MetricsConfig(ks=self.ks, kinds=self.kinds, head_frac=self.head_frac,
+                             n_folds=self.n_folds, folds=self.folds)
 
 
 # ─────────────────────── avaliação de UMA combinação (testável) ────────────────────
@@ -118,7 +123,7 @@ def load_fold_runs(cfg: GridConfig) -> tuple[list[tuple], set[int], set[int]]:
     qrels_all = build_qrels(pooled)
 
     fold_runs: list[tuple] = []
-    for f in range(cfg.n_folds):
+    for f in cfg.fold_ids():
         sp = os.path.join(cfg.runs_dir, cfg.sparse_template.format(fold=f))
         de = os.path.join(cfg.runs_dir, cfg.dense_template.format(fold=f))
         for p in (sp, de):
@@ -141,7 +146,7 @@ def run_grid(cfg: GridConfig | None = None) -> list[dict]:
     total = len(cfg.norms) * len(cfg.methods)
     print(
         f"grid: {len(cfg.norms)} norm × {len(cfg.methods)} fusão = {total} combos "
-        f"| {cfg.n_folds} folds | ranqueando por {cfg.select_segment} {cfg.select_metric}"
+        f"| folds {list(cfg.fold_ids())} | ranqueando por {cfg.select_segment} {cfg.select_metric}"
     )
 
     records: list[dict] = []
@@ -198,10 +203,11 @@ def save_csv(ranked: list[dict], cfg: GridConfig) -> None:
 def main(cfg: GridConfig | None = None) -> None:
     import argparse
 
-    from src.data import add_dataset_arg, apply_dataset
+    from src.data import add_dataset_arg, add_folds_arg, apply_dataset, parse_folds
 
     parser = argparse.ArgumentParser(description="Grid search da fusão (norm × método)")
     add_dataset_arg(parser)
+    add_folds_arg(parser)
     parser.add_argument("--select", type=str, default=None,
                         help="métrica de seleção no formato segmento:metrica (ex.: tail:ndcg@5)")
     parser.add_argument("--paper", action="store_true",
@@ -211,6 +217,7 @@ def main(cfg: GridConfig | None = None) -> None:
 
     cfg = cfg or GridConfig()
     apply_dataset(cfg, args.dataset)
+    cfg.folds = parse_folds(args.folds)
     if args.paper:
         cfg.norms, cfg.methods = PAPER_NORMS, PAPER_METHODS
     if args.select:
