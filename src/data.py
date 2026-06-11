@@ -114,7 +114,10 @@ def _read_lines(path: str) -> list[str]:
             f"Arquivo não encontrado: {path}\n"
             f"Rode antes o script de download do dataset (scripts/download_*.sh)"
         )
-    with open(path, encoding="utf-8") as fh:
+    # errors="replace": alguns datasets (ex.: Amazon-670K) têm bytes não-UTF-8
+    # no Y.txt/textos. Não afeta a indexação (rótulo = label_{coluna}, não o texto),
+    # só substitui o byte inválido por U+FFFD — tolerante e reprodutível.
+    with open(path, encoding="utf-8", errors="replace") as fh:
         return [line.rstrip("\n") for line in fh]
 
 

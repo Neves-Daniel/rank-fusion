@@ -123,6 +123,28 @@ def load_run(path: str, name: str | None = None):
     return run
 
 
+def _align_to_common_qids(runs: list) -> list:
+    """Restringe os runs ao conjunto COMUM de qids. `ranx.fuse` exige que todos os
+    runs tenham EXATAMENTE os mesmos qids; mas um doc de teste pode faltar num
+    recuperador — ex.: texto vazio (alguns artigos do Wiki10 vêm em branco) → BM25
+    sem vizinhos → qid ausente no run esparso, mas presente no denso (o embedding
+    sempre existe). Fundimos só onde os DOIS têm sinal (interseção); os poucos qids
+    descartados são docs vazios (~0,02% no Wiki10), sem sinal esparso pra fundir. Se
+    os conjuntos já batem (caso comum), devolve os runs intactos, sem custo."""
+    from ranx import Run
+
+    key_sets = [set(r.keys()) for r in runs]
+    common = set.intersection(*key_sets)
+    if all(len(ks) == len(common) for ks in key_sets):
+        return runs
+    aligned = []
+    for r in runs:
+        nr = Run({q: scores for q, scores in r.to_dict().items() if q in common})
+        nr.name = r.name
+        aligned.append(nr)
+    return aligned
+
+
 def fuse_runs(runs: list, norm: str, method: str, params: dict | None = None):
     """Funde uma lista de ranx.Run com (normalização × fusão), via ranx.
 
@@ -135,6 +157,7 @@ def fuse_runs(runs: list, norm: str, method: str, params: dict | None = None):
         raise ValueError(f"normalização {norm!r} desconhecida; use uma de {sorted(NORMS)}.")
     if method not in METHODS:
         raise ValueError(f"fusão {method!r} desconhecida; use uma de {sorted(METHODS)}.")
+    runs = _align_to_common_qids(runs)        # ranx.fuse exige qids idênticos entre runs
     fused = fuse(runs, norm=NORMS[norm], method=METHODS[method], params=params)
     fused.name = f"{method}_{norm}"
     return fused
