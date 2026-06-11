@@ -18,6 +18,7 @@ from src.retrieve_dense import (
     build_relevance_map,
     build_train_pairs,
     rank_per_class,
+    rank_per_class_chunked,
     resolve_label_texts,
 )
 from src.retrieve_sparse import write_trec
@@ -130,6 +131,45 @@ def test_rank_per_class_classe_vazia_nao_quebra():
     labels = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     runs = rank_per_class(q, ["0"], labels, [0, 1], head={0, 1}, tail=set(), num_labels=5)
     assert {c for c, _ in runs["0"]} == {0, 1}   # cauda vazia: só cabeça
+
+
+# ─────────────── inferência chunkada (Amazon-670K) — equivalência ao numpy ──────────
+
+def _runs_equivalentes(a: dict, b: dict, tol: float = 1e-4) -> None:
+    """Mesma seleção de rótulos por query e scores próximos (fp16/ordem do topk)."""
+    assert a.keys() == b.keys()
+    for qid in a:
+        da, db = dict(a[qid]), dict(b[qid])
+        assert da.keys() == db.keys(), f"qid {qid}: rótulos divergem"
+        for col in da:
+            assert da[col] == pytest.approx(db[col], abs=tol)
+
+
+def test_rank_per_class_chunked_equivale_ao_numpy():
+    # vocabulário "grande" sintético; vários blocos de query (chunk_size < Nq)
+    rng = np.random.RandomState(7)
+    n_labels, n_q, dim = 400, 37, 8
+    q = rng.randn(n_q, dim).astype(np.float32)
+    q /= np.linalg.norm(q, axis=1, keepdims=True)          # L2 (como o encoder)
+    labels = rng.randn(n_labels, dim).astype(np.float32)
+    labels /= np.linalg.norm(labels, axis=1, keepdims=True)
+    head = set(range(80))
+    tail = set(range(80, n_labels))
+    qids = [str(i) for i in range(n_q)]
+
+    exato = rank_per_class(q, qids, labels, list(range(n_labels)), head, tail, num_labels=64)
+    chunk = rank_per_class_chunked(q, qids, labels, list(range(n_labels)), head, tail,
+                                   num_labels=64, chunk_size=10, device="cpu")
+    _runs_equivalentes(exato, chunk)
+
+
+def test_rank_per_class_chunked_classe_vazia_nao_quebra():
+    q = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    labels = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    chunk = rank_per_class_chunked(q, ["0", "1"], labels, [0, 1],
+                                   head={0, 1}, tail=set(), num_labels=5,
+                                   chunk_size=1, device="cpu")
+    assert {c for c, _ in chunk["0"]} == {0, 1}   # cauda vazia: só cabeça, sem erro
 
 
 # ─────────────────────── FakeEncoder ponta-a-ponta → run TREC ──────────────────────

@@ -91,6 +91,12 @@ class DenseConfig:
     num_labels: int = 64              # rótulos mantidos POR classe (64+64=128, como o artigo)
     head_frac: float = 0.20           # Pareto: 20% mais frequentes = cabeça
     encode_batch_size: int = 256      # lote de embedding na inferência
+    # inferência chunkada (vocabulários enormes tipo Amazon-670K): a matriz [Nq, Nl]
+    # do cosine não materializa (670K rótulos × ~128K queries seria >300 GB). Acima de
+    # infer_chunk_threshold rótulos, ranqueia em blocos de query (rótulos no device uma
+    # vez) — resultado IDÊNTICO ao rank_per_class. Abaixo, segue o numpy exato (intacto).
+    infer_chunk_threshold: int = 100_000
+    infer_chunk_size: int = 1024      # queries por bloco no scorer chunkado
     # opcionalidade das RAG-labels (knob nativo do RAG-Fuse)
     label_enhancement: str = "LLM"    # "LLM" = descrições; "NONE" = só o nome cru
     # protocolo / reprodutibilidade
@@ -190,6 +196,66 @@ def rank_per_class(
             cols = label_ids_arr[pos[top]]
             items.extend((int(c), float(s)) for c, s in zip(cols, sub[top]))
         runs[qid] = items
+    return runs
+
+
+def rank_per_class_chunked(
+    text_rpr: np.ndarray,
+    query_ids: list[str],
+    label_rpr: np.ndarray,
+    label_ids: list[int],
+    head: set[int],
+    tail: set[int],
+    num_labels: int,
+    chunk_size: int = 1024,
+    device: str = "cuda",
+) -> dict[str, list[tuple[int, float]]]:
+    """Versão chunkada de `rank_per_class` para vocabulários enormes (ex.: Amazon-670K,
+    670K rótulos), onde a matriz completa `[Nq, Nl]` não cabe na memória.
+
+    Mesma semântica EXATA do `rank_per_class` (top-`num_labels` cabeça + top-`num_labels`
+    cauda, produto interno = cosine em vetores L2-normalizados), só que:
+      - os embeddings de rótulo (cabeça e cauda) vão UMA vez para o `device` (GPU);
+      - as queries são processadas em blocos de `chunk_size` → a matriz parcial é só
+        `[chunk_size, Nl]`, não `[Nq, Nl]`.
+    Resultado idêntico ao caminho numpy (mesma seleção top-k) — é um trade de memória,
+    não de fidelidade. Roda em GPU (matmul de 670K rótulos é inviável em CPU numpy);
+    `device="cpu"` funciona para teste com torch.
+    """
+    import torch
+
+    dev = torch.device(device if torch.cuda.is_available() else "cpu")
+    label_ids_arr = np.asarray(label_ids)
+    head_pos = np.array([i for i, c in enumerate(label_ids) if c in head], dtype=np.intp)
+    tail_pos = np.array([i for i, c in enumerate(label_ids) if c in tail], dtype=np.intp)
+
+    # rótulos de cada classe no device uma vez (cabeça + cauda), com as colunas alinhadas
+    groups = []
+    for pos in (head_pos, tail_pos):
+        if pos.shape[0] == 0:
+            continue
+        L = torch.from_numpy(np.ascontiguousarray(label_rpr[pos])).to(dev)
+        groups.append((L, label_ids_arr[pos]))
+
+    runs: dict[str, list[tuple[int, float]]] = {}
+    with torch.no_grad():
+        for start in range(0, len(query_ids), chunk_size):
+            block = text_rpr[start:start + chunk_size]
+            q = torch.from_numpy(np.ascontiguousarray(block)).to(dev)   # [Bq, D]
+            items_block: list[list[tuple[int, float]]] = [[] for _ in range(q.shape[0])]
+            for L, cols in groups:
+                sims = q @ L.T                                          # [Bq, Nsub]
+                k = min(num_labels, L.shape[0])
+                vals, idx = torch.topk(sims, k, dim=1)                  # já ordenado desc
+                vals_np = vals.float().cpu().numpy()
+                idx_np = idx.cpu().numpy()
+                for bi in range(q.shape[0]):
+                    sel = cols[idx_np[bi]]
+                    items_block[bi].extend(
+                        (int(c), float(s)) for c, s in zip(sel, vals_np[bi])
+                    )
+            for bi in range(q.shape[0]):
+                runs[query_ids[start + bi]] = items_block[bi]
     return runs
 
 
@@ -467,6 +533,13 @@ def infer_fold(
     text_rpr = _encode(encoder, tokenizer, query_texts, cfg.text_max_length, cfg)
     label_rpr = _encode(encoder, tokenizer, label_texts, cfg.label_max_length, cfg)
     label_ids = list(range(len(label_texts)))
+    if len(label_texts) > cfg.infer_chunk_threshold:
+        print(f"  inferência chunkada: {len(label_texts)} rótulos > "
+              f"{cfg.infer_chunk_threshold} → blocos de {cfg.infer_chunk_size} queries no device")
+        return rank_per_class_chunked(
+            text_rpr, query_ids, label_rpr, label_ids, head, tail,
+            cfg.num_labels, chunk_size=cfg.infer_chunk_size, device=cfg.device,
+        )
     return rank_per_class(text_rpr, query_ids, label_rpr, label_ids, head, tail, cfg.num_labels)
 
 
