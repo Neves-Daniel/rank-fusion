@@ -1,0 +1,151 @@
+% ============================================================
+% refs.bib — rank-fusion (XMTC). Estilo: ACM-Reference-Format.
+% Todas as entradas foram auditadas na fonte (DOI/arXiv/Crossref/DBLP).
+% Campos pages/volume omitidos onde a fonte primária não confirmou — não inventar.
+% ============================================================
+
+% ===== BM25 (verificado: Crossref 10.1561/1500000019) =====
+@article{robertson2009probabilistic,
+  author  = {Robertson, Stephen and Zaragoza, Hugo},
+  title   = {The Probabilistic Relevance Framework: {BM25} and Beyond},
+  journal = {Foundations and Trends in Information Retrieval},
+  year    = {2009},
+  volume  = {4},
+  number  = {1--2},
+  pages   = {1--174},
+  doi     = {10.1561/1500000019}
+}
+
+% ===== Fusão de rankings / data fusion clássica =====
+@inproceedings{Fox1994CombMNZ,
+  author    = {Fox, Edward A. and Shaw, Joseph A.},
+  title     = {Combination of Multiple Searches},
+  booktitle = {Proceedings of the Second Text REtrieval Conference (TREC-2)},
+  series    = {NIST Special Publication 500-215},
+  pages     = {243--252},
+  year      = {1994},
+  publisher = {National Institute of Standards and Technology}
+}
+
+@inproceedings{Cormack2009RRF,
+  author    = {Cormack, Gordon V. and Clarke, Charles L. A. and B{\"u}ttcher, Stefan},
+  title     = {Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods},
+  booktitle = {Proceedings of the 32nd International ACM SIGIR Conference on Research and Development in Information Retrieval},
+  pages     = {758--759},
+  year      = {2009},
+  publisher = {ACM},
+  doi       = {10.1145/1571941.1572114}
+}
+
+@inproceedings{Montague2002Condorcet,
+  author    = {Montague, Mark and Aslam, Javed A.},
+  title     = {Condorcet Fusion for Improved Retrieval},
+  booktitle = {Proceedings of the Eleventh International Conference on Information and Knowledge Management (CIKM)},
+  year      = {2002},
+  publisher = {ACM},
+  doi       = {10.1145/584792.584881}
+}
+
+% ===== XMTC / extreme multi-label =====
+@inproceedings{You2019AttentionXML,
+  author    = {You, Ronghui and Zhang, Zihan and Wang, Ziye and Dai, Suyang and Mamitsuka, Hiroshi and Zhu, Shanfeng},
+  title     = {AttentionXML: Label Tree-based Attention-Aware Deep Model for High-Performance Extreme Multi-Label Text Classification},
+  booktitle = {Advances in Neural Information Processing Systems 32 (NeurIPS)},
+  pages     = {5812--5822},
+  year      = {2019}
+}
+
+@inproceedings{Prabhu2018Parabel,
+  author    = {Prabhu, Yashoteja and Kag, Anil and Harsola, Shrutendra and Agrawal, Rahul and Varma, Manik},
+  title     = {Parabel: Partitioned Label Trees for Extreme Classification with Application to Dynamic Search Advertising},
+  booktitle = {Proceedings of the 2018 World Wide Web Conference (WWW)},
+  pages     = {993--1002},
+  year      = {2018},
+  publisher = {ACM},
+  doi       = {10.1145/3178876.3185998}
+}
+
+@inproceedings{Babbar2017DiSMEC,
+  author    = {Babbar, Rohit and Sch{\"o}lkopf, Bernhard},
+  title     = {DiSMEC: Distributed Sparse Machines for Extreme Multi-label Classification},
+  booktitle = {Proceedings of the Tenth ACM International Conference on Web Search and Data Mining (WSDM)},
+  pages     = {721--729},
+  year      = {2017},
+  publisher = {ACM},
+  doi       = {10.1145/3018661.3018741}
+}
+
+% ===== Tail labels / propensity-scored metrics (origem de PSP@k/PSnDCG@k) =====
+@inproceedings{Jain2016PropensityXML,
+  author    = {Jain, Himanshu and Prabhu, Yashoteja and Varma, Manik},
+  title     = {Extreme Multi-label Loss Functions for Recommendation, Tagging, Ranking \& Other Missing Label Applications},
+  booktitle = {Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining (KDD)},
+  year      = {2016},
+  publisher = {ACM},
+  doi       = {10.1145/2939672.2939756}
+}
+
+% ===== Retrieval denso (complementaridade léxico-semântica) =====
+@inproceedings{Karpukhin2020DPR,
+  author    = {Karpukhin, Vladimir and O{\u{g}}uz, Barlas and Min, Sewon and Lewis, Patrick and Wu, Ledell and Edunov, Sergey and Chen, Danqi and Yih, Wen-tau},
+  title     = {Dense Passage Retrieval for Open-Domain Question Answering},
+  booktitle = {Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP)},
+  pages     = {6769--6781},
+  year      = {2020},
+  publisher = {Association for Computational Linguistics},
+  doi       = {10.18653/v1/2020.emnlp-main.550}
+}
+
+% ===== Âncoras do grupo (metadados corrigidos na auditoria) =====
+% NB: ainda NÃO citadas no texto da Introduction — entram no Related Work.
+@article{Franca2025RankFusionXMTC,
+  author  = {Fran{\c{c}}a, Celso and Rabbi, Gestefane and Salles, Thiago and Cunha, Washington and Rocha, Leonardo and Gon{\c{c}}alves, Marcos Andr{\'e}},
+  title   = {Ranking-based Fusion Algorithms for Extreme Multi-label Text Classification (XMTC)},
+  journal = {arXiv preprint arXiv:2507.03761},
+  year    = {2025}
+}
+
+@inproceedings{Franca2025SIGIR,
+  author    = {Fran{\c{c}}a, Celso and Rabbi, Gestefane and Salles, Thiago and Cunha, Washington and Rocha, Leonardo and Gon{\c{c}}alves, Marcos Andr{\'e}},
+  title     = {Optimizing Tail-Head Trade-off for Extreme Multi-Label Text Classification (XMTC) with RAG-Labels and a Dynamic Two-Stage Retrieval and Fusion Pipeline},
+  booktitle = {Proceedings of the 48th International ACM SIGIR Conference on Research and Development in Information Retrieval},
+  year      = {2025},
+  publisher = {ACM},
+  doi       = {10.1145/3726302.3730052}
+}
+
+@inproceedings{Franca2025SBBD,
+  author    = {Fran{\c{c}}a, Celso and Nunes, Ian and Salles, Thiago and Cunha, Washington and Jallais, Gabriel and Rocha, Leonardo and Gon{\c{c}}alves, Marcos Andr{\'e}},
+  title     = {Muitas Classes Desbalanceadas? N{\~a}o Classifique - Ranqueie! Uma Abordagem Baseada em Retrieval-Augmented Generation (RAG)-labels para Classifica{\c{c}}{\~a}o Textual Multi-classe},
+  booktitle = {Anais do XL Simp{\'o}sio Brasileiro de Bancos de Dados (SBBD)},
+  pages     = {264--277},
+  year      = {2025},
+  publisher = {SBC},
+  doi       = {10.5753/sbbd.2025.247073}
+}
+
+@article{Valem2023RFE,
+  author  = {Valem, Lucas Pascotti and Pedronette, Daniel Carlos Guimar{\~a}es and Latecki, Longin Jan},
+  title   = {Rank Flow Embedding for Unsupervised and Semi-Supervised Manifold Learning},
+  journal = {IEEE Transactions on Image Processing},
+  year    = {2023},
+  doi     = {10.1109/TIP.2023.3268868}
+}
+
+@article{Pedronette2019LHRR,
+  author  = {Pedronette, Daniel Carlos Guimar{\~a}es and Valem, Lucas Pascotti and Almeida, Jurandy and Torres, Ricardo da S.},
+  title   = {Multimedia Retrieval Through Unsupervised Hypergraph-Based Manifold Ranking},
+  journal = {IEEE Transactions on Image Processing},
+  volume  = {28},
+  number  = {12},
+  year    = {2019},
+  doi     = {10.1109/TIP.2019.2920526}
+}
+
+@article{Valem2018CPRR,
+  author  = {Valem, Lucas Pascotti and Pedronette, Daniel Carlos Guimar{\~a}es and Almeida, Jurandy},
+  title   = {Unsupervised similarity learning through Cartesian product of ranking references},
+  journal = {Pattern Recognition Letters},
+  year    = {2018},
+  doi     = {10.1016/j.patrec.2017.10.013}
+}
