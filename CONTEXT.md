@@ -44,6 +44,12 @@ fundir os dois rankings reforça acertos e reduz ruído — útil justamente na 
 
 Todos do mesmo grupo (UFMG/UFSJ): França, Rabbi, Salles, Cunha, Rocha, Gonçalves.
 
+4. **UDLF — colaboração UNICAMP/UNESP (Pedronette, jun/2026).** Framework de
+   re-ranking e agregação contextual não-supervisionados (11 métodos; sugeridos:
+   **RFE** IEEE TIP 2023, **LHRR** IEEE TIP 2019, **CPRR** PRL 2018). Família
+   distinta dos fundidores do ranx, a avaliar lado a lado na mesma grade.
+   Desenho da integração e adaptação ao cenário bipartido: `docs/udlf-integration.md`.
+
 ## Glossário rápido
 - **XMTC:** Extreme Multi-Label Text Classification.
 - **Head / tail labels:** rótulos frequentes / raros (split Pareto: 80% menos
@@ -64,6 +70,8 @@ Eurlex-4K (validação inicial, já baixado) → Wiki10-31K → AmazonCat-13K �
 - **xCoRetriev (SIGIR 2025):** DOI 10.1145/3726302.3730052 —
   https://dl.acm.org/doi/10.1145/3726302.3730052  (texto completo atrás de paywall ACM)
 - **RAG-labels (SBBD 2025):** https://sol.sbc.org.br/index.php/sbbd/article/view/37243
+- **UDLF:** https://github.com/UDLF/UDLF — site: https://www.ic.unicamp.br/~dcarlos/UDLF/index.html
+- **pyUDLF:** https://github.com/UDLF/pyUDLF
 
 ## Acesso rápido (dados e ferramentas)
 - **Dados no disco:** `data/<dataset>/raw/` (texto + matrizes de rótulos, formato PECOS).
