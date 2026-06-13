@@ -115,22 +115,29 @@ Eurlex-4K (validação inicial, já baixado) → Wiki10-31K → AmazonCat-13K �
   (`"LLM"` usa as descrições do fold; `"NONE"` cai no nome cru — fallback automático).
   15 testes CPU verdes (FakeEncoder; loss/encoder reais são opt-in, marker `bert`).
   Falta `pip install pytorch-metric-learning` + treinar/inferir na Brev.
-- ✅ **Fusão implementada** (`src/fusion.py`): wrappers ranx para as 6 normalizações ×
-  10 fusões do artigo (melhor = CombMNZ+ZMUV) + extras p/ teste (norma min-max-inverted;
-  fusões rrf, logn_isr, rbc[φ], gmnz[γ]) = **7 norm × 14 fusão = 98 combinações**.
-  CombMNZ e RRF reimplementados à mão e validados contra o ranx (igualdade de ordem).
-  `run_cv` funde o melhor par por fold; `run_grid` funde as 98 combinações. 14 testes
-  CPU verdes. Insumo do grid search. Import do ranx é lazy.
+- ✅ **Fusão implementada** (`src/fusion.py`): wrappers ranx para as 7 normalizações ×
+  a **grade COMPLETA de 25 fusões do ranx = 175 combinações** (conforme a proposta).
+  As 25 = **14 não-supervisionadas** (10 do artigo, melhor = CombMNZ+ZMUV, + extras
+  rrf, logn_isr, rbc[φ], gmnz[γ]) + **11 supervisionadas** (wsum, wmnz, mixed,
+  bayesfuse, mapfuse, posfuse, probfuse, segfuse, slidefuse via `optimize_fusion`;
+  w_bordafuse, w_condorcet via grid de peso à mão). As supervisionadas aprendem
+  parâmetros por **CV aninhada** (params do fold k treinados nos OUTROS folds, sem
+  vazamento) otimizando uma **métrica de cauda** (`learn_fusion_params`). CombMNZ e RRF
+  reimplementados à mão e validados contra o ranx. `run_cv` funde o melhor par por
+  fold; `run_grid` funde as 175 combinações. Import do ranx é lazy.
 - ✅ **Métricas implementadas** (`src/metrics.py`): P@k/nDCG@k/Recall@k (k∈{1,5,10}) via
   ranx, **segmentados overall/cabeça/cauda** (restringe ranking E gold ao segmento),
   por fold + média±desvio entre folds. `run_report` compara sparse, dense e o melhor
   par fundido. 10 testes CPU verdes (valores conferidos na mão). Import do ranx lazy.
   PSP@k/PSnDCG@k (extensão) ainda a fazer.
-- ✅ **Grid search implementado** (`src/gridsearch.py`): varre as 98 combinações
+- ✅ **Grid search implementado** (`src/gridsearch.py`): varre as 175 combinações
   (norm × fusão), funde em memória (runs base carregados 1×), avalia segmentado e
   ranqueia por uma métrica de cauda (default tail nDCG@5); imprime top-N + posição do
-  CombMNZ+ZMUV e salva CSV long-format. Modo `--paper` (só 6×10), `--select seg:metrica`.
-  7 testes CPU verdes. Reusa fusion.py + metrics.py.
+  CombMNZ+ZMUV e salva CSV long-format. As fusões supervisionadas usam CV aninhada
+  (`evaluate_combo_supervised`: treina nos outros folds, qrels de cauda). Modo
+  `--paper` (só 6×10 do artigo), `--select seg:metrica`. Reusa fusion.py + metrics.py.
+  NB: a grade de 25 é mais lenta (a otimização supervisionada + a reconstrução dos
+  `Qrels`/`Run` do ranx dominam) — otimização de performance pendente p/ AmazonCat/670K.
 - 📊 **Primeiros números (Eurlex-4K, CombMNZ+ZMUV)**: fusão > denso > esparso em tudo;
   ganho na CAUDA desproporcional (tail P@1 0.39→0.46, tail nDCG@5 0.45→0.52 vs denso;
   +15–17%) sem prejudicar a cabeça (+1–4%). Replica o achado do artigo.

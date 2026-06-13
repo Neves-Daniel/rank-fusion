@@ -29,9 +29,9 @@ def test_import_nao_puxa_ranx():
     assert "ok" in res.stdout
 
 
-def test_grid_config_defaults_98_combos():
+def test_grid_config_defaults_175_combos():
     cfg = GridConfig()
-    assert len(cfg.norms) == 7 and len(cfg.methods) == 14   # 98 combinações
+    assert len(cfg.norms) == 7 and len(cfg.methods) == 25   # 175 combinações (grade completa)
     assert cfg.select_segment == "tail" and cfg.select_metric == "ndcg@5"
 
 
@@ -99,3 +99,33 @@ def test_evaluate_combo_roda_para_varias_fusoes():
         agg = evaluate_combo("minmax", method, fold_runs, {0, 1}, {2}, mcfg,
                              params=method_params(method))
         assert "ndcg@1" in agg["overall"]
+
+
+def test_evaluate_combo_supervised_cv_aninhada():
+    pytest.importorskip("ranx")
+    from ranx import Run
+
+    from src.gridsearch import evaluate_combo_supervised
+
+    # 2 folds (qids disjuntos): fold k treina no outro fold. cauda={2}
+    f0 = (
+        Run({"a": {"label_0": 3.0, "label_2": 1.0}}, name="sparse"),
+        Run({"a": {"label_1": 2.0, "label_2": 1.5}}, name="dense"),
+        {"a": {"label_0": 1.0, "label_2": 1.0}},
+    )
+    f1 = (
+        Run({"b": {"label_0": 2.0, "label_2": 1.2}}, name="sparse"),
+        Run({"b": {"label_1": 1.0, "label_2": 1.8}}, name="dense"),
+        {"b": {"label_2": 1.0}},
+    )
+    fold_runs = [f0, f1]
+    mcfg = MetricsConfig(ks=(1,), kinds=("ndcg",))
+    # um optimize (wsum) e um ponderado (wcondorcet); ambos otimizam p/ cauda
+    for method in ("wsum", "wcondorcet"):
+        agg = evaluate_combo_supervised(
+            "zmuv", method, fold_runs, head={0, 1}, tail={2}, mcfg=mcfg,
+            select_segment="tail", select_metric="ndcg@1",
+        )
+        assert set(agg) == {"overall", "head", "tail"}
+        mean, std = agg["tail"]["ndcg@1"]
+        assert 0.0 <= mean <= 1.0          # métrica válida, sem NaN (2 folds → há treino)

@@ -13,8 +13,9 @@ e ranqueados. O projeto gera dois rankings base por documento — um **esparso**
 (kNN léxico via BM25) e um **denso** (bi-encoder BERT *fine-tuned* com rótulos
 representados por descrições geradas por LLM, as "RAG-labels") — e estuda
 sistematicamente quais combinações de **algoritmo de fusão de rankings ×
-estratégia de normalização de scores** (98 combinações: 7 normalizações × 14
-fusões) melhoram a recuperação de **tail labels** (rótulos raros) sem prejudicar
+estratégia de normalização de scores** (175 combinações: 7 normalizações × 25
+fusões — 14 não-supervisionadas + 11 supervisionadas) melhoram a recuperação de
+**tail labels** (rótulos raros) sem prejudicar
 os **head labels** (rótulos frequentes). O protocolo replica o artigo-base do
 grupo (França et al. 2025, arXiv 2507.03761): 5-fold CV sobre o dataset agrupado,
 métricas P@k/nDCG@k/Recall@k segmentadas cabeça/cauda (Pareto 80/20), baseline
@@ -70,9 +71,9 @@ rank-fusion/
 │  ├─ label_desc.py      # RAG-labels: descrição de rótulo via LLM (vLLM), por fold
 │  ├─ prompts/           # label_desc_prompt.txt (verbatim do RAG-Fuse)
 │  ├─ retrieve_dense.py  # denso: bi-encoder BERT fine-tuned → run TREC por fold
-│  ├─ fusion.py          # wrappers ranx (7 norm × 14 fusão) + CombMNZ/RRF à mão
+│  ├─ fusion.py          # wrappers ranx (7 norm × 25 fusão) + CombMNZ/RRF à mão; learn_fusion_params (superv.)
 │  ├─ metrics.py         # P@k/nDCG@k/Recall@k segmentados overall/cabeça/cauda
-│  └─ gridsearch.py      # varre as 98 combinações, ranqueia por métrica de cauda + CSV
+│  └─ gridsearch.py      # varre as 175 combinações; superv. via CV aninhada; ranqueia por cauda + CSV
 ├─ tests/                # ~100 testes; CPU por padrão (dublês), GPU/IO opt-in por marker
 ├─ docs/udlf-integration.md   # desenho da integração UDLF (não versionado ainda)
 └─ data/<dataset>/{raw, runs, rag-labels, results}   # dados e artefatos (não versionados)
@@ -112,9 +113,9 @@ flowchart TD
     DE["retrieve_dense.py (GPU)<br/>bi-encoder BERT fine-tuned (NT-Xent)<br/>rótulo = nome + descrição RAG-label<br/>cosine exato → top-64 cabeça + top-64 cauda"]
     RUNS_S["runs/sparse.fold{f}.trec"]
     RUNS_D["runs/dense.fold{f}.trec"]
-    FUS["fusion.py<br/>normalização × fusão (ranx)<br/>7 normas × 14 métodos"]
+    FUS["fusion.py<br/>normalização × fusão (ranx)<br/>7 normas × 25 métodos (14 não-superv. + 11 superv.)"]
     MET["metrics.py<br/>P@k / nDCG@k / Recall@k<br/>segmentado overall / cabeça / cauda<br/>média ± desvio entre folds"]
-    GRID["gridsearch.py<br/>98 combos em memória<br/>ranqueia por tail nDCG@5<br/>→ results/gridsearch.csv"]
+    GRID["gridsearch.py<br/>175 combos em memória<br/>superv. via CV aninhada<br/>ranqueia por tail nDCG@5<br/>→ results/gridsearch.csv"]
 
     RAW --> DATA
     DATA --> LD --> JSONL --> DE
@@ -177,9 +178,10 @@ Todas registradas no código/docs; trade-offs explicitados nos próprios arquivo
    comparabilidade com o baseline. A degradação de embeddings fica registrada
    como ameaça à validade (REQUIREMENTS.md, "Casos de borda").
 9. **"Gerar runs uma vez, iterar fusão offline":** a fusão é barata; o grid
-   search carrega os runs base uma única vez e funde as 98 combinações em
+   search carrega os runs base uma única vez e funde as 175 combinações em
    memória (gridsearch.py) — anti-padrão explícito do CLAUDE.md é recomputar
-   recuperação a cada experimento.
+   recuperação a cada experimento. (As 11 fusões supervisionadas aprendem seus
+   parâmetros por CV aninhada nos próprios runs base — nada de recuperação nova.)
 
 ## 5. Funcionalidades principais
 
@@ -190,9 +192,9 @@ Todas registradas no código/docs; trade-offs explicitados nos próprios arquivo
 | Recuperador esparso (BM25 kNN) | `src/retrieve_sparse.py` | Indexa corpus do fold com retriv; vizinhos "votam" nos rótulos (agregação MAX, fiel ao paper); top-64 cabeça + top-64 cauda; dedup de query; `run_cv` resume-safe, `--fold`, `--query-batch-size`, índice isolado por fold |
 | RAG-labels (descrições de rótulo via LLM) | `src/label_desc.py`, `src/prompts/label_desc_prompt.txt` | Prompt verbatim do RAG-Fuse com exemplos contrastivos; Llama-3.1-8B via vLLM (`LLM.chat`); JSONL por fold, append-only, resume idempotente |
 | Recuperador denso (bi-encoder fine-tuned) | `src/retrieve_dense.py` | BERT + ConcatenatePooling (4 últimas camadas no [CLS], 3072-d, L2-norm); NT-Xent temp 0.07 + RelevanceMiner; AdamW 5e-5 + warmup, 5 épocas fp16; inferência cosine exata ou chunkada (>100K rótulos); RAG-labels opcionais (`--label-enhancement LLM|NONE`) |
-| Fusão de rankings | `src/fusion.py` | Wrappers ranx para 7 normalizações × 14 fusões (6×10 do artigo + extras); alinhamento de qids entre runs; CombMNZ e RRF à mão validados contra o ranx |
+| Fusão de rankings | `src/fusion.py` | Wrappers ranx para 7 normalizações × **25 fusões** (14 não-superv.: 6×10 do artigo + extras; 11 superv.: wsum/wmnz/mixed/bayesfuse/mapfuse/posfuse/probfuse/segfuse/slidefuse via `optimize_fusion` + w_bordafuse/w_condorcet via grid de peso). `learn_fusion_params` treina as superv.; alinhamento de qids; CombMNZ/RRF à mão validados contra o ranx |
 | Avaliação segmentada | `src/metrics.py` | P@k/nDCG@k/Recall@k (k∈{1,5,10}) via ranx em 3 recortes (overall/head/tail); média±desvio entre folds; `run_report` compara sparse/dense/fundido |
-| Grid search | `src/gridsearch.py` | 98 combos fundidos em memória, ranqueados por métrica de cauda (default tail nDCG@5); imprime top-N + posição do CombMNZ+ZMUV; CSV long-format; `--paper` restringe às 6×10 do artigo |
+| Grid search | `src/gridsearch.py` | **175 combos** fundidos em memória, ranqueados por métrica de cauda (default tail nDCG@5); fusões supervisionadas via **CV aninhada** (`evaluate_combo_supervised`: params do fold k treinados nos outros folds, qrels de cauda, sem vazamento); imprime top-N + posição do CombMNZ+ZMUV; CSV long-format; `--paper` restringe às 6×10 do artigo |
 | Download de dados | `scripts/download_eurlex.sh`, `download_wiki10.sh`, `download_xmc.sh` | Eurlex via HuggingFace; demais via PECOS xmc-base (archive.org), com fetch robusto curl→wget→python |
 | Integração UDLF (em andamento) | `docs/udlf-integration.md`, `scripts/smoke_udlf.py` | Fusão/re-ranking contextual não-supervisionado (CPRR/LHRR/RFE); adaptação bipartida por blocos proposta; smoke test pronto; `src/udlf_fusion.py` ainda não existe |
 | Suíte de testes | `tests/` (~100 testes) | CPU por padrão com dublês (FakeSR/FakeLLM/FakeEncoder); BM25/vLLM/BERT reais opt-in via markers `bm25`/`vllm`/`bert` |
@@ -246,7 +248,7 @@ Todas registradas no código/docs; trade-offs explicitados nos próprios arquivo
    que conferem igualdade de *ordem* com o `ranx.fuse`. Cumpre o guardrail
    metodológico ("implementar 2-3 algoritmos à mão só para demonstrar
    entendimento e validar contra o ranx") e dá confiança na biblioteca que roda
-   as outras 96 combinações.
+   as outras 173 combinações.
 
 6. *(menção honrosa)* **Uso de `LLM.chat` em vez de `LLM.generate` no vLLM** —
    `src/label_desc.py:190-224` (`VLLMBackend`). Pré-renderizar o chat template e
@@ -318,7 +320,7 @@ O histórico cobre 7 dias intensos (2026-06-05 a 2026-06-11), 36 commits.
 - **2026-06-07 — Correção de rota metodológica.** Reverte o batch 128→32 ao
   detectar o CV não-homogêneo; institui o log de config de treino.
 - **2026-06-08 — Avaliação e generalização.** Métricas segmentadas
-  cabeça/cauda; grid search das 98 combinações ranqueado por cauda; flag
+  cabeça/cauda; grid search das (à época) 98 combinações ranqueado por cauda; flag
   `--dataset` em todos os CLIs e início da escalada para o Wiki10-31K; primeiro
   endurecimento do esparso (resume-safe, `--fold`).
 - **2026-06-09→11 — Robustez para datasets grandes.** Script de download
@@ -326,9 +328,12 @@ O histórico cobre 7 dias intensos (2026-06-05 a 2026-06-11), 36 commits.
   isolados por fold para paralelismo); seletor `--folds` (3 dos 5 por
   orçamento); tolerância a encoding e inferência densa chunkada para o
   Amazon-670K.
-- **Trabalho em andamento (não commitado):** `docs/udlf-integration.md` e
-  `scripts/smoke_udlf.py` — desenho da integração com o framework UDLF
-  (colaboração UNICAMP/UNESP) para comparar fusão clássica × fusão contextual.
+- **2026-06-12→13 — Harness de artigo + grade completa de fusão.** Agentes/skills
+  para escrever o paper (extrator-de-fatos, revisores, verificador, escrita-artigo);
+  esqueleto acmart + `refs.bib` auditado; integração UDLF (`docs/udlf-integration.md`).
+  E a **expansão da grade de 14 → 25 fusões** (a proposta): somam-se as 11
+  supervisionadas do ranx (9 via `optimize_fusion`, 2 via grid de peso), treinadas
+  por **CV aninhada** otimizando uma métrica de cauda — sem retreinar recuperador.
 
 ## 9. Como rodar
 
@@ -352,7 +357,7 @@ python -m pytest -m bm25                  # BM25 real (retriv)
 python -m src.retrieve_sparse             # 5 folds → runs/sparse.fold{f}.trec
 python -m src.fusion                      # CombMNZ+ZMUV nos 5 folds
 python -m src.metrics                     # relatório sparse/dense/fundido segmentado
-python -m src.gridsearch                  # 98 combos, ranking por tail nDCG@5 + CSV
+python -m src.gridsearch                  # 175 combos (25 fusões), ranking por tail nDCG@5 + CSV
 # Flags comuns: --dataset <nome> · --folds 0,1,2 · --fold N · --no-resume
 ```
 

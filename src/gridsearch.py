@@ -27,13 +27,23 @@ from dataclasses import dataclass, field
 if __package__ in {None, ""}:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.fusion import METHODS, NORMS, fuse_runs, load_run, method_params, run_to_dict
+from src.fusion import (
+    METHODS,
+    NORMS,
+    SUPERVISED,
+    fuse_runs,
+    learn_fusion_params,
+    load_run,
+    method_params,
+    run_to_dict,
+)
 from src.metrics import (
     SEGMENTS,
     MetricsConfig,
     aggregate,
     build_qrels,
     evaluate_segmented,
+    label_to_col,
     metric_names,
 )
 from src.retrieve_sparse import head_tail_split
@@ -102,6 +112,69 @@ def evaluate_combo(
     return {s: aggregate(per_fold[s]) for s in SEGMENTS}
 
 
+def _restrict_qrels(qrels_fold: dict, cols: set[int]) -> dict:
+    """Restringe os qrels aos rótulos de `cols` (ex.: cauda); descarta query sem gold
+    no recorte — é o sinal que faz o optimize_fusion mirar a métrica daquele segmento."""
+    out: dict[str, dict[str, float]] = {}
+    for qid, gold in qrels_fold.items():
+        g = {l: r for l, r in gold.items() if label_to_col(l) in cols}
+        if g:
+            out[qid] = g
+    return out
+
+
+def _merge_runs(runs):
+    """Une vários ranx.Run de qids disjuntos (folds de treino) num só Run."""
+    from ranx import Run
+
+    merged: dict[str, dict[str, float]] = {}
+    for r in runs:
+        merged.update(r.to_dict())
+    return Run(merged)
+
+
+def evaluate_combo_supervised(
+    norm: str,
+    method: str,
+    fold_runs: list[tuple],
+    head: set[int],
+    tail: set[int],
+    mcfg: MetricsConfig,
+    select_segment: str,
+    select_metric: str,
+) -> dict[str, dict[str, tuple[float, float]]]:
+    """Avalia uma fusão SUPERVISIONADA via CV ANINHADA: para fundir o fold k, aprende
+    os parâmetros nos OUTROS folds (params disjuntos do teste → sem vazamento), com os
+    qrels restritos ao segmento de seleção (cauda) para otimizar a métrica de cauda.
+    Aplica os params aprendidos ao fold k e avalia segmentado como qualquer método.
+
+    Requer ≥2 folds (1 p/ treino, 1 p/ teste); com <2 devolve NaN (sem o que treinar)."""
+    seg_cols = tail if select_segment == "tail" else (head if select_segment == "head" else None)
+    per_fold: dict[str, list[dict]] = {s: [] for s in SEGMENTS}
+    n = len(fold_runs)
+    for k in range(n):
+        train_idx = [j for j in range(n) if j != k]
+        if not train_idx:                       # 1 fold só: nada para treinar
+            for s in SEGMENTS:
+                per_fold[s].append({m: float("nan") for m in metric_names(mcfg.ks, mcfg.kinds)})
+            continue
+        train_sparse = _merge_runs([fold_runs[j][0] for j in train_idx]); train_sparse.name = "sparse"
+        train_dense = _merge_runs([fold_runs[j][1] for j in train_idx]); train_dense.name = "dense"
+        train_qrels: dict[str, dict[str, float]] = {}
+        for j in train_idx:
+            q = _restrict_qrels(fold_runs[j][2], seg_cols) if seg_cols else fold_runs[j][2]
+            train_qrels.update(q)
+        params = learn_fusion_params(
+            train_qrels, [train_sparse, train_dense], norm, method, metric=select_metric,
+        )
+        sparse_k, dense_k, qrels_k = fold_runs[k]
+        fused = fuse_runs([sparse_k, dense_k], norm=norm, method=method, params=params)
+        seg = evaluate_segmented(run_to_dict(fused), qrels_k, head, tail, mcfg)
+        for s in SEGMENTS:
+            per_fold[s].append(seg[s])
+    return {s: aggregate(per_fold[s]) for s in SEGMENTS}
+
+
 def rank_records(
     records: list[dict], segment: str, metric: str, descending: bool = True
 ) -> list[dict]:
@@ -152,12 +225,20 @@ def run_grid(cfg: GridConfig | None = None) -> list[dict]:
     records: list[dict] = []
     done = 0
     for method in cfg.methods:
-        params = method_params(method, k=cfg.rrf_k, phi=cfg.rbc_phi, gamma=cfg.gmnz_gamma)
+        supervised = method in SUPERVISED
+        params = None if supervised else method_params(method, k=cfg.rrf_k, phi=cfg.rbc_phi, gamma=cfg.gmnz_gamma)
         for norm in cfg.norms:
-            agg = evaluate_combo(norm, method, fold_runs, head, tail, mcfg, params)
+            if supervised:
+                agg = evaluate_combo_supervised(
+                    norm, method, fold_runs, head, tail, mcfg,
+                    cfg.select_segment, cfg.select_metric,
+                )
+            else:
+                agg = evaluate_combo(norm, method, fold_runs, head, tail, mcfg, params)
             records.append({"norm": norm, "method": method, "agg": agg})
             done += 1
-        print(f"  {method}: {len(cfg.norms)} combos ({done}/{total})")
+        tag = " [supervisionada: CV aninhada]" if supervised else ""
+        print(f"  {method}: {len(cfg.norms)} combos ({done}/{total}){tag}")
 
     return rank_records(records, cfg.select_segment, cfg.select_metric)
 

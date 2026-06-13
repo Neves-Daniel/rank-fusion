@@ -37,11 +37,19 @@ def test_import_nao_puxa_ranx():
 
 
 def test_mapeamentos_artigo_mais_extras():
-    # 6 norm + min-max-inverted = 7 ; 10 fusões do artigo + 4 extras = 14
-    assert len(NORMS) == 7 and len(METHODS) == 14
+    # 6 norm + min-max-inverted = 7 ; grade COMPLETA do ranx = 25 fusões
+    # (14 não-supervisionadas + 11 supervisionadas), conforme a proposta.
+    from src.fusion import SUPERVISED, SUPERVISED_OPTIMIZE, SUPERVISED_WEIGHTED
+
+    assert len(NORMS) == 7 and len(METHODS) == 25
     assert NORMS["minmaxinv"] == "min-max-inverted"
     assert {"rrf", "lognisr", "rbc", "gmnz"} <= set(METHODS)
     assert NORMS["zmuv"] == "zmuv" and METHODS["combmnz"] == "mnz"
+    # 11 supervisionadas: 9 via optimize + 2 ponderadas; disjuntas das 14 fixas
+    assert len(SUPERVISED) == 11 and len(SUPERVISED_OPTIMIZE) == 9 and len(SUPERVISED_WEIGHTED) == 2
+    assert SUPERVISED <= set(METHODS)
+    assert METHODS["wbordafuse"] == "w_bordafuse" and METHODS["wsum"] == "wsum"
+    assert len(set(METHODS) - SUPERVISED) == 14   # as 14 não-supervisionadas
 
 
 def test_method_params_so_para_parametrizados():
@@ -123,18 +131,38 @@ def toy_runs():
     return r1, r2
 
 
-def test_todas_as_98_combinacoes_rodam_no_ranx(toy_runs):
-    from src.fusion import fuse_runs
+def test_todas_as_nao_supervisionadas_rodam_no_ranx(toy_runs):
+    # as 14 NÃO-supervisionadas fundem direto (sem treino): 7 norm × 14 = 98 combos
+    from src.fusion import SUPERVISED, fuse_runs
 
     r1, r2 = toy_runs
+    nao_sup = [m for m in METHODS if m not in SUPERVISED]
+    assert len(nao_sup) == 14
     n = 0
     for norm in NORMS:
-        for method in METHODS:
+        for method in nao_sup:
             params = method_params(method)          # passa φ/γ/k aos parametrizados
             fused = fuse_runs([r1, r2], norm=norm, method=method, params=params)
             assert fused.to_dict()                  # produz ranking não-vazio
             n += 1
-    assert n == 98                                  # 7 norm × 14 fusão
+    assert n == 98                                  # 7 norm × 14 fusão não-supervisionada
+
+
+def test_learn_fusion_params_optimize_e_weighted(toy_runs):
+    # supervisionadas precisam aprender params; testa um optimize (wsum) e um
+    # ponderado (wbordafuse) — ambos devem devolver dict de params usável no fuse.
+    from src.fusion import SUPERVISED, fuse_runs, learn_fusion_params
+
+    r1, r2 = toy_runs
+    # qrels de treino: usa os próprios candidatos do toy como "gold" (sinal qualquer)
+    d1 = r1.to_dict()
+    qrels = {q: {next(iter(labels)): 1.0} for q, labels in d1.items() if labels}
+    for method in ("wsum", "wbordafuse"):
+        assert method in SUPERVISED
+        params = learn_fusion_params(qrels, [r1, r2], norm="minmax", method=method, metric="ndcg@5")
+        assert "weights" in params and len(params["weights"]) == 2
+        fused = fuse_runs([r1, r2], norm="minmax", method=method, params=params)
+        assert fused.to_dict()
 
 
 def test_comb_mnz_a_mao_bate_com_ranx(toy_runs):

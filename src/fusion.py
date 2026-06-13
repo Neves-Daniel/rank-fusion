@@ -3,9 +3,19 @@
 Combina os dois runs base por fold (BM25 kNN + bi-encoder denso) num único ranking,
 varrendo o produto **(normalização × algoritmo de fusão)** que o artigo-base estuda
 (França et al. 2025, arXiv 2507.03761): 6 normalizações × 10 fusões, melhor reportada
-= **CombMNZ + ZMUV**. Além do artigo, incluímos extras do ranx para teste: a norma
-`min-max-inverted` e as fusões `rrf`, `logn_isr`, `rbc` (φ), `gmnz` (γ) — total de
-7 normalizações × 14 fusões = 98 combinações no grid.
+= **CombMNZ + ZMUV**. Estendemos a grade para o conjunto COMPLETO do ranx — 7
+normalizações × **25 fusões** = 175 combinações — conforme a proposta do projeto.
+
+As 25 fusões dividem-se em:
+  - **14 não-supervisionadas** (paramétrico-fixas): as 10 do artigo + `rrf`,
+    `logn_isr`, `rbc` (φ), `gmnz` (γ). Fundem direto os runs de teste.
+  - **11 supervisionadas** (aprendem parâmetros num conjunto de treino com qrels):
+    `wsum`, `wmnz`, `mixed`, `bayesfuse`, `mapfuse`, `posfuse`, `probfuse`,
+    `segfuse`, `slidefuse` (via `ranx.optimize_fusion`) + `w_bordafuse`,
+    `w_condorcet` (peso otimizado à mão, pois o ranx não os otimiza). O treino usa
+    **CV aninhada** (params do fold k aprendidos nos OUTROS folds — sem vazamento) e
+    otimiza para uma **métrica de cauda** (foco da pergunta de pesquisa). Ver
+    `learn_fusion_params` aqui e a orquestração em gridsearch.py.
 
 Fonte da verdade = `ranx` (AmenRa/ranx), como manda o guardrail do projeto. Para
 demonstrar entendimento e validar o ranx, reimplementamos 2 algoritmos à mão
@@ -60,15 +70,40 @@ METHODS: dict[str, str] = {
     "logisr": "log_isr",
     "bordafuse": "bordafuse",
     "condorcet": "condorcet",
-    # extras (além do artigo)
+    # extras não-supervisionados (além do artigo)
     "rrf": "rrf",
     "lognisr": "logn_isr",
     "rbc": "rbc",
     "gmnz": "gmnz",
+    # supervisionadas (completam a grade de 25 da proposta) — chave nossa → string ranx
+    "wsum": "wsum",
+    "wmnz": "wmnz",
+    "mixed": "mixed",
+    "bayesfuse": "bayesfuse",
+    "mapfuse": "mapfuse",
+    "posfuse": "posfuse",
+    "probfuse": "probfuse",
+    "segfuse": "segfuse",
+    "slidefuse": "slidefuse",
+    "wbordafuse": "w_bordafuse",
+    "wcondorcet": "w_condorcet",
 }
 
 # Métodos que exigem parâmetro extra no ranx → como mapear de FusionConfig.
 _PARAMIZED = {"rrf", "rbc", "gmnz"}
+
+# Fusões SUPERVISIONADAS: aprendem parâmetros num conjunto de treino (qrels). Duas
+# famílias, pelo mecanismo do ranx:
+#  - SUPERVISED_OPTIMIZE: `ranx.optimize_fusion` aprende os params (pesos de wsum/
+#    wmnz/mixed; distribuições dos métodos `*_train`).
+#  - SUPERVISED_WEIGHTED: o ranx NÃO otimiza (w_bordafuse/w_condorcet); otimizamos o
+#    peso à mão (1 escalar p/ 2 runs) maximizando a métrica-alvo no treino.
+SUPERVISED_OPTIMIZE: set[str] = {
+    "wsum", "wmnz", "mixed", "bayesfuse", "mapfuse",
+    "posfuse", "probfuse", "segfuse", "slidefuse",
+}
+SUPERVISED_WEIGHTED: set[str] = {"wbordafuse", "wcondorcet"}
+SUPERVISED: set[str] = SUPERVISED_OPTIMIZE | SUPERVISED_WEIGHTED
 
 
 def method_params(method: str, k: int = 60, phi: float = 0.8, gamma: float = 2.0) -> dict | None:
@@ -161,6 +196,65 @@ def fuse_runs(runs: list, norm: str, method: str, params: dict | None = None):
     fused = fuse(runs, norm=NORMS[norm], method=METHODS[method], params=params)
     fused.name = f"{method}_{norm}"
     return fused
+
+
+_WEIGHT_GRID = tuple((i / 10, 1 - i / 10) for i in range(11))   # (1.0,0.0)..(0.0,1.0)
+
+
+def learn_fusion_params(
+    train_qrels: dict,
+    train_runs: list,
+    norm: str,
+    method: str,
+    metric: str = "ndcg@5",
+) -> dict:
+    """Aprende os parâmetros de uma fusão SUPERVISIONADA num conjunto de treino.
+
+    - `method` em SUPERVISED_OPTIMIZE → delega ao `ranx.optimize_fusion` (aprende
+      pesos ou distribuições maximizando `metric` sobre `train_qrels`).
+    - `method` em SUPERVISED_WEIGHTED (w_bordafuse/w_condorcet) → o ranx não otimiza;
+      fazemos grid-search do peso (1 escalar p/ 2 runs) maximizando `metric`.
+
+    `train_runs` = [sparse, dense] (ranx.Run dos folds de TREINO, disjuntos do fold de
+    teste — CV aninhada). `train_qrels` deve vir restrito ao alvo (ex.: rótulos de
+    CAUDA) para que a otimização mire a métrica de cauda. Retorna o dict de params
+    para passar a `fuse_runs(..., params=...)`.
+    """
+    from ranx import Qrels, Run, fuse, optimize_fusion
+    from ranx import evaluate as ranx_evaluate
+
+    if method not in SUPERVISED:
+        raise ValueError(f"{method!r} não é supervisionada (use SUPERVISED).")
+    if not train_qrels:
+        raise ValueError("train_qrels vazio — sem sinal de treino (ex.: nenhum gold de cauda).")
+
+    # ranx.optimize_fusion exige run.keys() == qrels.keys() EXATAMENTE. Os qrels de
+    # cauda descartam queries sem gold de cauda → têm menos qids que os runs. Alinha
+    # tudo ao conjunto COMUM (qrels ∩ todos os runs) para casar os qids.
+    common = set(train_qrels)
+    for r in train_runs:
+        common &= set(r.keys())
+    if not common:
+        raise ValueError("sem qids em comum entre qrels (cauda) e runs de treino.")
+    qrels = Qrels({q: train_qrels[q] for q in common})
+    runs = []
+    for r in train_runs:
+        nr = Run({q: s for q, s in r.to_dict().items() if q in common})
+        nr.name = r.name
+        runs.append(nr)
+
+    if method in SUPERVISED_OPTIMIZE:
+        return optimize_fusion(
+            qrels=qrels, runs=runs, norm=NORMS[norm], method=METHODS[method], metric=metric,
+        )
+    # SUPERVISED_WEIGHTED: grid-search do peso (maximiza metric no treino)
+    best_w, best_score = _WEIGHT_GRID[5], -1.0
+    for w in _WEIGHT_GRID:
+        fused = fuse(runs, norm=NORMS[norm], method=METHODS[method], params={"weights": w})
+        score = float(ranx_evaluate(qrels, fused, metric))
+        if score > best_score:
+            best_score, best_w = score, w
+    return {"weights": best_w}
 
 
 def save_run(run, path: str) -> None:
