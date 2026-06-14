@@ -24,6 +24,11 @@ import os
 import sys
 from dataclasses import dataclass, field
 
+# numba com fork-safe threading layer: a paralelização do grid usa um process pool
+# por fork; o "workqueue" evita o deadlock dos layers OpenMP/TBB sob fork. Setado
+# ANTES de qualquer import de ranx/numba (que é lazy). Inofensivo no modo serial.
+os.environ.setdefault("NUMBA_THREADING_LAYER", "workqueue")
+
 if __package__ in {None, ""}:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -77,6 +82,7 @@ class GridConfig:
     out_csv: str = "data/eurlex4k/results/gridsearch.csv"
     norms: tuple[str, ...] = field(default_factory=lambda: tuple(NORMS))
     methods: tuple[str, ...] = field(default_factory=lambda: tuple(METHODS))
+    workers: int = 1   # >1 → avalia as combos (norma × fusão) em paralelo (process pool, fork)
 
     def fold_ids(self) -> tuple[int, ...]:
         return self.folds if self.folds is not None else tuple(range(self.n_folds))
@@ -210,9 +216,47 @@ def load_fold_runs(cfg: GridConfig) -> tuple[list[tuple], set[int], set[int]]:
     return fold_runs, head, tail
 
 
+def _evaluate_cell(norm: str, method: str, fold_runs, head, tail, mcfg, cfg) -> dict:
+    """Avalia UMA combinação (norma × fusão) — supervisionada (CV aninhada) ou não.
+    Unidade de trabalho compartilhada pelos caminhos serial e paralelo."""
+    if method in SUPERVISED:
+        agg = evaluate_combo_supervised(
+            norm, method, fold_runs, head, tail, mcfg,
+            cfg.select_segment, cfg.select_metric,
+        )
+    else:
+        params = method_params(method, k=cfg.rrf_k, phi=cfg.rbc_phi, gamma=cfg.gmnz_gamma)
+        agg = evaluate_combo(norm, method, fold_runs, head, tail, mcfg, params)
+    return {"norm": norm, "method": method, "agg": agg}
+
+
+# Estado compartilhado por FORK com os workers do pool — evita picklar os runs base
+# (ranx.Run). Setado no pai ANTES de criar o pool; os filhos herdam por copy-on-write.
+_SHARED: dict = {}
+
+
+def _pool_init() -> None:
+    """Init de cada worker: numba single-thread. Evita oversubscrição (N workers × M
+    threads cada) e mantém a paralelização 'educada' no host compartilhado."""
+    try:
+        import numba
+        numba.set_num_threads(1)
+    except Exception:
+        pass
+
+
+def _pool_eval(task):
+    norm, method = task
+    s = _SHARED
+    return _evaluate_cell(norm, method, s["fold_runs"], s["head"], s["tail"], s["mcfg"], s["cfg"])
+
+
 def run_grid(cfg: GridConfig | None = None) -> list[dict]:
     """Avalia todas as combinações (norms × methods) e retorna os registros
-    [{norm, method, agg}], ordenados pela métrica de seleção."""
+    [{norm, method, agg}], ordenados pela métrica de seleção.
+
+    `cfg.workers > 1` paraleliza as combos num process pool (fork) — cada combo é
+    independente. Resultado idêntico ao serial; só muda o tempo de parede."""
     cfg = cfg or GridConfig()
     mcfg = cfg.metrics_config()
     fold_runs, head, tail = load_fold_runs(cfg)
@@ -220,26 +264,34 @@ def run_grid(cfg: GridConfig | None = None) -> list[dict]:
     print(
         f"grid: {len(cfg.norms)} norm × {len(cfg.methods)} fusão = {total} combos "
         f"| folds {list(cfg.fold_ids())} | ranqueando por {cfg.select_segment} {cfg.select_metric}"
+        + (f" | {cfg.workers} workers" if cfg.workers and cfg.workers > 1 else "")
     )
-
+    tasks = [(norm, method) for method in cfg.methods for norm in cfg.norms]
     records: list[dict] = []
+
+    if cfg.workers and cfg.workers > 1:
+        import concurrent.futures as cf
+        import multiprocessing as mp
+
+        _SHARED.update(fold_runs=fold_runs, head=head, tail=tail, mcfg=mcfg, cfg=cfg)
+        done = 0
+        ctx = mp.get_context("fork")
+        with cf.ProcessPoolExecutor(max_workers=cfg.workers, mp_context=ctx,
+                                    initializer=_pool_init) as ex:
+            for rec in ex.map(_pool_eval, tasks):     # ordem preservada (determinístico)
+                records.append(rec)
+                done += 1
+                print(f"  ({done}/{total}) {rec['method']}+{rec['norm']}", flush=True)
+        return rank_records(records, cfg.select_segment, cfg.select_metric)
+
+    # serial (default): comportamento inalterado
     done = 0
     for method in cfg.methods:
-        supervised = method in SUPERVISED
-        params = None if supervised else method_params(method, k=cfg.rrf_k, phi=cfg.rbc_phi, gamma=cfg.gmnz_gamma)
         for norm in cfg.norms:
-            if supervised:
-                agg = evaluate_combo_supervised(
-                    norm, method, fold_runs, head, tail, mcfg,
-                    cfg.select_segment, cfg.select_metric,
-                )
-            else:
-                agg = evaluate_combo(norm, method, fold_runs, head, tail, mcfg, params)
-            records.append({"norm": norm, "method": method, "agg": agg})
+            records.append(_evaluate_cell(norm, method, fold_runs, head, tail, mcfg, cfg))
             done += 1
-        tag = " [supervisionada: CV aninhada]" if supervised else ""
+        tag = " [supervisionada: CV aninhada]" if method in SUPERVISED else ""
         print(f"  {method}: {len(cfg.norms)} combos ({done}/{total}){tag}")
-
     return rank_records(records, cfg.select_segment, cfg.select_metric)
 
 
@@ -294,6 +346,9 @@ def main(cfg: GridConfig | None = None) -> None:
     parser.add_argument("--paper", action="store_true",
                         help="só as 6×10 combinações do artigo (exclui rrf/rbc/gmnz/logn_isr/min-max-inverted)")
     parser.add_argument("--top", type=int, default=None, help="quantas combos imprimir")
+    parser.add_argument("--workers", type=int, default=None,
+                        help="nº de processos paralelos p/ as combos (default 1 = serial). "
+                             "Ex.: 16 no host compartilhado da Brev (255 cores)")
     args, _ = parser.parse_known_args()
 
     cfg = cfg or GridConfig()
@@ -306,6 +361,8 @@ def main(cfg: GridConfig | None = None) -> None:
         cfg.select_segment, cfg.select_metric = seg, met
     if args.top:
         cfg.top_n = args.top
+    if args.workers:
+        cfg.workers = args.workers
 
     ranked = run_grid(cfg)
     print(format_grid_report(ranked, cfg))
