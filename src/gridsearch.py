@@ -20,8 +20,10 @@ Uso:
 from __future__ import annotations
 
 import csv
+import io
 import os
 import sys
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 
 # numba com fork-safe threading layer: a paralelização do grid usa um process pool
@@ -83,6 +85,7 @@ class GridConfig:
     norms: tuple[str, ...] = field(default_factory=lambda: tuple(NORMS))
     methods: tuple[str, ...] = field(default_factory=lambda: tuple(METHODS))
     workers: int = 1   # >1 → avalia as combos (norma × fusão) em paralelo (process pool, fork)
+    resume: bool = True   # retoma do checkpoint (.ckpt.csv) pulando combos já feitas
 
     def fold_ids(self) -> tuple[int, ...]:
         return self.folds if self.folds is not None else tuple(range(self.n_folds))
@@ -246,52 +249,128 @@ def _pool_init() -> None:
 
 
 def _pool_eval(task):
-    norm, method = task
+    method, norm = task        # all_cells = (method, norm)
     s = _SHARED
     return _evaluate_cell(norm, method, s["fold_runs"], s["head"], s["tail"], s["mcfg"], s["cfg"])
+
+
+# ─────────────────────── checkpoint (resume + à prova de crash) ─────────────────────
+# Cada combo concluída é gravada NA HORA num checkpoint long-format (.ckpt.csv). Se o
+# pool quebrar (ex.: worker morto por OOM), o que já terminou está salvo; relançar (ou
+# o auto-retry abaixo) retoma só as combos que faltam. Nada de "perdeu tudo".
+
+def checkpoint_path(out_csv: str) -> str:
+    base, ext = os.path.splitext(out_csv)
+    return f"{base}.ckpt{ext or '.csv'}"
+
+
+def _cell_rows(rec: dict, names: list[str]) -> list[list[str]]:
+    return [[rec["method"], rec["norm"], seg, n,
+             f"{rec['agg'][seg][n][0]:.6f}", f"{rec['agg'][seg][n][1]:.6f}"]
+            for seg in SEGMENTS for n in names]
+
+
+def _append_checkpoint(path: str, rec: dict, names: list[str]) -> None:
+    """Grava as linhas de UMA combo em escrita única (atômica o suficiente) + fsync,
+    pra um crash não deixar a combo pela metade."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    buf = io.StringIO()
+    csv.writer(buf).writerows(_cell_rows(rec, names))
+    with open(path, "a", newline="", encoding="utf-8") as fh:
+        fh.write(buf.getvalue())
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def load_checkpoint(path: str, names: list[str]) -> dict:
+    """{(method,norm): agg} só para combos COMPLETAS (todas as métricas presentes).
+    Tolera duplicatas (último valor vence) — relançar nunca corrompe."""
+    if not os.path.exists(path):
+        return {}
+    cells: dict = {}
+    with open(path, newline="", encoding="utf-8") as fh:
+        for row in csv.reader(fh):
+            if len(row) != 6:
+                continue
+            m, n, seg, metric, mean, std = row
+            cells.setdefault((m, n), {}).setdefault(seg, {})[metric] = (float(mean), float(std))
+    expected = len(SEGMENTS) * len(names)
+    return {k: agg for k, agg in cells.items()
+            if sum(len(v) for v in agg.values()) >= expected}
+
+
+def _run_cells(cells, fold_runs, head, tail, mcfg, cfg, workers, ckpt, names, base_done, total):
+    """Processa uma leva de combos, gravando cada uma no checkpoint ao concluir.
+    workers>1 → process pool (fork); pode levantar BrokenProcessPool (tratado acima)."""
+    done = base_done
+    if workers > 1:
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        _SHARED.update(fold_runs=fold_runs, head=head, tail=tail, mcfg=mcfg, cfg=cfg)
+        ctx = mp.get_context("fork")
+        with ProcessPoolExecutor(max_workers=workers, mp_context=ctx,
+                                 initializer=_pool_init) as ex:
+            futs = {ex.submit(_pool_eval, c): c for c in cells}
+            for fut in as_completed(futs):
+                rec = fut.result()      # pode levantar BrokenProcessPool (worker morto)
+                _append_checkpoint(ckpt, rec, names)
+                done += 1
+                print(f"  ({done}/{total}) {rec['method']}+{rec['norm']}", flush=True)
+    else:
+        for (method, norm) in cells:
+            rec = _evaluate_cell(norm, method, fold_runs, head, tail, mcfg, cfg)
+            _append_checkpoint(ckpt, rec, names)
+            done += 1
+            print(f"  ({done}/{total}) {method}+{norm}", flush=True)
 
 
 def run_grid(cfg: GridConfig | None = None) -> list[dict]:
     """Avalia todas as combinações (norms × methods) e retorna os registros
     [{norm, method, agg}], ordenados pela métrica de seleção.
 
-    `cfg.workers > 1` paraleliza as combos num process pool (fork) — cada combo é
-    independente. Resultado idêntico ao serial; só muda o tempo de parede."""
+    À PROVA DE CRASH: cada combo vai pro checkpoint ao concluir; se o pool quebrar
+    (OOM de worker), o que terminou está salvo e o run **auto-retoma as restantes
+    com metade dos workers** (até serial, se preciso). `cfg.resume` (default) também
+    permite continuar de um run interrompido — só relançar o mesmo comando."""
     cfg = cfg or GridConfig()
     mcfg = cfg.metrics_config()
     fold_runs, head, tail = load_fold_runs(cfg)
-    total = len(cfg.norms) * len(cfg.methods)
+    names = metric_names(cfg.ks, cfg.kinds)
+    all_cells = [(method, norm) for method in cfg.methods for norm in cfg.norms]
+    total = len(all_cells)
+    ckpt = checkpoint_path(cfg.out_csv)
+
+    if not cfg.resume and os.path.exists(ckpt):
+        os.remove(ckpt)                       # --no-resume: começa do zero
+    done = load_checkpoint(ckpt, names)
+    remaining = [c for c in all_cells if c not in done]
+
     print(
         f"grid: {len(cfg.norms)} norm × {len(cfg.methods)} fusão = {total} combos "
         f"| folds {list(cfg.fold_ids())} | ranqueando por {cfg.select_segment} {cfg.select_metric}"
         + (f" | {cfg.workers} workers" if cfg.workers and cfg.workers > 1 else "")
+        + (f" | resume: {len(done)}/{total} já feitas" if done else "")
     )
-    tasks = [(norm, method) for method in cfg.methods for norm in cfg.norms]
-    records: list[dict] = []
 
-    if cfg.workers and cfg.workers > 1:
-        import concurrent.futures as cf
-        import multiprocessing as mp
+    workers = cfg.workers if (cfg.workers and cfg.workers > 1) else 1
+    while remaining:
+        try:
+            _run_cells(remaining, fold_runs, head, tail, mcfg, cfg, workers, ckpt, names,
+                       base_done=len(done), total=total)
+        except BrokenProcessPool:
+            done = load_checkpoint(ckpt, names)          # o que sobreviveu está salvo
+            remaining = [c for c in all_cells if c not in done]
+            if workers > 1:
+                workers = max(1, workers // 2)
+                print(f"  [recuperação] pool quebrou (provável OOM) → retomando "
+                      f"{len(remaining)} combos com {workers} worker(s)", flush=True)
+                continue
+            raise                                         # serial também quebrou: erro real
+        done = load_checkpoint(ckpt, names)
+        remaining = [c for c in all_cells if c not in done]
 
-        _SHARED.update(fold_runs=fold_runs, head=head, tail=tail, mcfg=mcfg, cfg=cfg)
-        done = 0
-        ctx = mp.get_context("fork")
-        with cf.ProcessPoolExecutor(max_workers=cfg.workers, mp_context=ctx,
-                                    initializer=_pool_init) as ex:
-            for rec in ex.map(_pool_eval, tasks):     # ordem preservada (determinístico)
-                records.append(rec)
-                done += 1
-                print(f"  ({done}/{total}) {rec['method']}+{rec['norm']}", flush=True)
-        return rank_records(records, cfg.select_segment, cfg.select_metric)
-
-    # serial (default): comportamento inalterado
-    done = 0
-    for method in cfg.methods:
-        for norm in cfg.norms:
-            records.append(_evaluate_cell(norm, method, fold_runs, head, tail, mcfg, cfg))
-            done += 1
-        tag = " [supervisionada: CV aninhada]" if method in SUPERVISED else ""
-        print(f"  {method}: {len(cfg.norms)} combos ({done}/{total}){tag}")
+    records = [{"method": m, "norm": n, "agg": done[(m, n)]} for (m, n) in all_cells]
     return rank_records(records, cfg.select_segment, cfg.select_metric)
 
 
@@ -330,6 +409,10 @@ def save_csv(ranked: list[dict], cfg: GridConfig) -> None:
                 for n in names:
                     mean, std = r["agg"][seg][n]
                     w.writerow([r["method"], r["norm"], seg, n, f"{mean:.6f}", f"{std:.6f}"])
+    # final gravado com sucesso → o checkpoint cumpriu o papel, pode sair
+    ckpt = checkpoint_path(cfg.out_csv)
+    if os.path.exists(ckpt):
+        os.remove(ckpt)
     print(f"\nCSV salvo: {cfg.out_csv} ({len(ranked)} combos × {len(SEGMENTS)} segmentos × {len(names)} métricas)")
 
 
@@ -349,6 +432,8 @@ def main(cfg: GridConfig | None = None) -> None:
     parser.add_argument("--workers", type=int, default=None,
                         help="nº de processos paralelos p/ as combos (default 1 = serial). "
                              "Ex.: 16 no host compartilhado da Brev (255 cores)")
+    parser.add_argument("--no-resume", action="store_true",
+                        help="ignora o checkpoint e refaz todas as combos do zero")
     args, _ = parser.parse_known_args()
 
     cfg = cfg or GridConfig()
@@ -363,6 +448,8 @@ def main(cfg: GridConfig | None = None) -> None:
         cfg.top_n = args.top
     if args.workers:
         cfg.workers = args.workers
+    if args.no_resume:
+        cfg.resume = False
 
     ranked = run_grid(cfg)
     print(format_grid_report(ranked, cfg))
