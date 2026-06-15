@@ -86,6 +86,8 @@ class GridConfig:
     methods: tuple[str, ...] = field(default_factory=lambda: tuple(METHODS))
     workers: int = 1   # >1 → avalia as combos (norma × fusão) em paralelo (process pool, fork)
     resume: bool = True   # retoma do checkpoint (.ckpt.csv) pulando combos já feitas
+    opt_sample: int = 0   # >0 → subamostra o treino da fusão supervisionada p/ N queries (acelera optimize)
+    opt_repeats: int = 1  # >1 → K amostras independentes + seleção do melhor no treino cheio (robustez)
 
     def fold_ids(self) -> tuple[int, ...]:
         return self.folds if self.folds is not None else tuple(range(self.n_folds))
@@ -151,6 +153,8 @@ def evaluate_combo_supervised(
     mcfg: MetricsConfig,
     select_segment: str,
     select_metric: str,
+    opt_sample: int = 0,
+    opt_repeats: int = 1,
 ) -> dict[str, dict[str, tuple[float, float]]]:
     """Avalia uma fusão SUPERVISIONADA via CV ANINHADA: para fundir o fold k, aprende
     os parâmetros nos OUTROS folds (params disjuntos do teste → sem vazamento), com os
@@ -174,7 +178,8 @@ def evaluate_combo_supervised(
             q = _restrict_qrels(fold_runs[j][2], seg_cols) if seg_cols else fold_runs[j][2]
             train_qrels.update(q)
         params = learn_fusion_params(
-            train_qrels, [train_sparse, train_dense], norm, method, metric=select_metric,
+            train_qrels, [train_sparse, train_dense], norm, method,
+            metric=select_metric, sample_size=opt_sample, repeats=opt_repeats,
         )
         sparse_k, dense_k, qrels_k = fold_runs[k]
         fused = fuse_runs([sparse_k, dense_k], norm=norm, method=method, params=params)
@@ -226,6 +231,7 @@ def _evaluate_cell(norm: str, method: str, fold_runs, head, tail, mcfg, cfg) -> 
         agg = evaluate_combo_supervised(
             norm, method, fold_runs, head, tail, mcfg,
             cfg.select_segment, cfg.select_metric,
+            opt_sample=cfg.opt_sample, opt_repeats=cfg.opt_repeats,
         )
     else:
         params = method_params(method, k=cfg.rrf_k, phi=cfg.rbc_phi, gamma=cfg.gmnz_gamma)
@@ -434,6 +440,14 @@ def main(cfg: GridConfig | None = None) -> None:
                              "Ex.: 16 no host compartilhado da Brev (255 cores)")
     parser.add_argument("--no-resume", action="store_true",
                         help="ignora o checkpoint e refaz todas as combos do zero")
+    parser.add_argument("--opt-sample", type=int, default=None,
+                        help="subamostra o treino da fusão supervisionada p/ N queries "
+                             "(acelera o optimize em datasets grandes; ex.: 2000). "
+                             "Não afeta a avaliação, que usa os folds de teste completos")
+    parser.add_argument("--opt-repeats", type=int, default=None,
+                        help="K amostras independentes + seleção do melhor candidato no "
+                             "treino completo (robustez à variância de amostra; ex.: 3). "
+                             "Mantenha K×opt-sample << treino p/ preservar a aceleração")
     args, _ = parser.parse_known_args()
 
     cfg = cfg or GridConfig()
@@ -450,6 +464,10 @@ def main(cfg: GridConfig | None = None) -> None:
         cfg.workers = args.workers
     if args.no_resume:
         cfg.resume = False
+    if args.opt_sample:
+        cfg.opt_sample = args.opt_sample
+    if args.opt_repeats:
+        cfg.opt_repeats = args.opt_repeats
 
     ranked = run_grid(cfg)
     print(format_grid_report(ranked, cfg))

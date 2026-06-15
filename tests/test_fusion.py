@@ -165,6 +165,41 @@ def test_learn_fusion_params_optimize_e_weighted(toy_runs):
         assert fused.to_dict()
 
 
+def test_learn_fusion_params_subamostragem(toy_runs):
+    # sample_size < nº de queries de treino → otimiza numa amostra (determinística),
+    # ainda devolve params válidos e usáveis no fuse.
+    from src.fusion import fuse_runs, learn_fusion_params
+
+    r1, r2 = toy_runs
+    qrels = {q: {next(iter(labels)): 1.0} for q, labels in r1.to_dict().items() if labels}
+    assert len(qrels) >= 2
+    p_full = learn_fusion_params(qrels, [r1, r2], norm="minmax", method="wsum", metric="ndcg@5")
+    p_amos = learn_fusion_params(qrels, [r1, r2], norm="minmax", method="wsum",
+                                 metric="ndcg@5", sample_size=1)
+    assert "weights" in p_amos and len(p_amos["weights"]) == 2
+    # determinístico: mesma amostra (seed fixa) → mesmo resultado em 2 chamadas
+    p_amos2 = learn_fusion_params(qrels, [r1, r2], norm="minmax", method="wsum",
+                                  metric="ndcg@5", sample_size=1)
+    assert p_amos == p_amos2
+    fused = fuse_runs([r1, r2], norm="minmax", method="wsum", params=p_amos)
+    assert fused.to_dict()
+
+
+def test_learn_fusion_params_k_restarts(toy_runs):
+    # opt (2): K amostras + seleção no treino completo → params válidos e determinístico.
+    from src.fusion import fuse_runs, learn_fusion_params
+
+    r1, r2 = toy_runs
+    qrels = {q: {next(iter(labels)): 1.0} for q, labels in r1.to_dict().items() if labels}
+    p = learn_fusion_params(qrels, [r1, r2], norm="minmax", method="wsum",
+                            metric="ndcg@5", sample_size=1, repeats=3)
+    assert "weights" in p and len(p["weights"]) == 2
+    p2 = learn_fusion_params(qrels, [r1, r2], norm="minmax", method="wsum",
+                             metric="ndcg@5", sample_size=1, repeats=3)
+    assert p == p2                                   # seeds fixas → determinístico
+    assert fuse_runs([r1, r2], norm="minmax", method="wsum", params=p).to_dict()
+
+
 def test_comb_mnz_a_mao_bate_com_ranx(toy_runs):
     from src.fusion import fuse_runs, run_to_dict
 

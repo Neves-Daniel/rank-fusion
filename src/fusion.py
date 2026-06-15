@@ -201,53 +201,16 @@ def fuse_runs(runs: list, norm: str, method: str, params: dict | None = None):
 _WEIGHT_GRID = tuple((i / 10, 1 - i / 10) for i in range(11))   # (1.0,0.0)..(0.0,1.0)
 
 
-def learn_fusion_params(
-    train_qrels: dict,
-    train_runs: list,
-    norm: str,
-    method: str,
-    metric: str = "ndcg@5",
-) -> dict:
-    """Aprende os parâmetros de uma fusão SUPERVISIONADA num conjunto de treino.
-
-    - `method` em SUPERVISED_OPTIMIZE → delega ao `ranx.optimize_fusion` (aprende
-      pesos ou distribuições maximizando `metric` sobre `train_qrels`).
-    - `method` em SUPERVISED_WEIGHTED (w_bordafuse/w_condorcet) → o ranx não otimiza;
-      fazemos grid-search do peso (1 escalar p/ 2 runs) maximizando `metric`.
-
-    `train_runs` = [sparse, dense] (ranx.Run dos folds de TREINO, disjuntos do fold de
-    teste — CV aninhada). `train_qrels` deve vir restrito ao alvo (ex.: rótulos de
-    CAUDA) para que a otimização mire a métrica de cauda. Retorna o dict de params
-    para passar a `fuse_runs(..., params=...)`.
-    """
-    from ranx import Qrels, Run, fuse, optimize_fusion
+def _fit_params_once(qrels, runs, norm: str, method: str, metric: str) -> dict:
+    """Aprende os params UMA vez no (qrels, runs) dado: `optimize_fusion` para as
+    SUPERVISED_OPTIMIZE; grid-search de peso para as SUPERVISED_WEIGHTED."""
+    from ranx import fuse, optimize_fusion
     from ranx import evaluate as ranx_evaluate
-
-    if method not in SUPERVISED:
-        raise ValueError(f"{method!r} não é supervisionada (use SUPERVISED).")
-    if not train_qrels:
-        raise ValueError("train_qrels vazio — sem sinal de treino (ex.: nenhum gold de cauda).")
-
-    # ranx.optimize_fusion exige run.keys() == qrels.keys() EXATAMENTE. Os qrels de
-    # cauda descartam queries sem gold de cauda → têm menos qids que os runs. Alinha
-    # tudo ao conjunto COMUM (qrels ∩ todos os runs) para casar os qids.
-    common = set(train_qrels)
-    for r in train_runs:
-        common &= set(r.keys())
-    if not common:
-        raise ValueError("sem qids em comum entre qrels (cauda) e runs de treino.")
-    qrels = Qrels({q: train_qrels[q] for q in common})
-    runs = []
-    for r in train_runs:
-        nr = Run({q: s for q, s in r.to_dict().items() if q in common})
-        nr.name = r.name
-        runs.append(nr)
 
     if method in SUPERVISED_OPTIMIZE:
         return optimize_fusion(
             qrels=qrels, runs=runs, norm=NORMS[norm], method=METHODS[method], metric=metric,
         )
-    # SUPERVISED_WEIGHTED: grid-search do peso (maximiza metric no treino)
     best_w, best_score = _WEIGHT_GRID[5], -1.0
     for w in _WEIGHT_GRID:
         fused = fuse(runs, norm=NORMS[norm], method=METHODS[method], params={"weights": w})
@@ -255,6 +218,90 @@ def learn_fusion_params(
         if score > best_score:
             best_score, best_w = score, w
     return {"weights": best_w}
+
+
+def learn_fusion_params(
+    train_qrels: dict,
+    train_runs: list,
+    norm: str,
+    method: str,
+    metric: str = "ndcg@5",
+    sample_size: int = 0,
+    repeats: int = 1,
+) -> dict:
+    """Aprende os parâmetros de uma fusão SUPERVISIONADA num conjunto de treino, via
+    CV aninhada (`train_*` são os folds de TREINO, disjuntos do teste). `train_qrels`
+    vem restrito ao alvo (cauda) para mirar a métrica de cauda.
+
+    Aceleração (datasets grandes) por SUBAMOSTRAGEM do treino da otimização: os params
+    (nº de segmentos, pesos) são de baixa dimensão → uma amostra de `sample_size`
+    queries estima-os quase igual ao treino cheio, mas o `optimize_fusion` fica
+    ~N/sample× mais leve. A AVALIAÇÃO final NÃO usa amostra — roda nos folds de teste
+    completos (gridsearch.py); só o aprendizado do parâmetro usa a amostra.
+
+    Validade científica (`repeats>1`): em vez de UMA amostra (sujeita a variância de
+    sorteio), tira `repeats` amostras independentes → `repeats` candidatos → e SELECIONA
+    o que pontua melhor **no treino COMPLETO** (re-avaliação barata: 1 fuse+eval por
+    candidato). Uniforme p/ os 11 métodos (não precisa "mediar" o parâmetro, só testar
+    e escolher) e principiada (o vencedor generaliza melhor ao treino inteiro, não a uma
+    amostra com sorte). Custo ≈ repeats × (otimização na amostra) + repeats × (1 eval
+    no cheio) → manter `repeats × sample_size` bem abaixo do treino total preserva o
+    ganho de tempo.
+    """
+    from ranx import Qrels, Run
+
+    if method not in SUPERVISED:
+        raise ValueError(f"{method!r} não é supervisionada (use SUPERVISED).")
+    if not train_qrels:
+        raise ValueError("train_qrels vazio — sem sinal de treino (ex.: nenhum gold de cauda).")
+
+    # ranx exige run.keys() == qrels.keys() EXATAMENTE. Os qrels de cauda descartam
+    # queries sem gold de cauda → alinha tudo ao conjunto COMUM (qrels ∩ todos os runs).
+    common = set(train_qrels)
+    for r in train_runs:
+        common &= set(r.keys())
+    if not common:
+        raise ValueError("sem qids em comum entre qrels (cauda) e runs de treino.")
+
+    def build(qids):
+        """(Qrels, [Run]) restritos a `qids`."""
+        q = Qrels({x: train_qrels[x] for x in qids})
+        rs = []
+        for r in train_runs:
+            nr = Run({x: s for x, s in r.to_dict().items() if x in qids})
+            nr.name = r.name
+            rs.append(nr)
+        return q, rs
+
+    # sem subamostragem (ou amostra ≥ treino): caminho direto no conjunto cheio
+    if not sample_size or len(common) <= sample_size:
+        q, rs = build(common)
+        return _fit_params_once(q, rs, norm, method, metric)
+
+    import random
+    sorted_common = sorted(common)
+
+    # 1 amostra só (repeats=1): cap simples
+    if repeats <= 1:
+        sub = random.Random(42).sample(sorted_common, sample_size)
+        q, rs = build(sub)
+        return _fit_params_once(q, rs, norm, method, metric)
+
+    # K restarts + SELEÇÃO no treino completo (robusto à variância de amostra)
+    from ranx import fuse
+    from ranx import evaluate as ranx_evaluate
+
+    qf, rsf = build(common)                     # treino completo, para pontuar candidatos
+    best_params, best_score = None, float("-inf")
+    for i in range(repeats):
+        sub = random.Random(42 + i).sample(sorted_common, sample_size)
+        q, rs = build(sub)
+        cand = _fit_params_once(q, rs, norm, method, metric)
+        fused = fuse(rsf, norm=NORMS[norm], method=METHODS[method], params=cand)
+        score = float(ranx_evaluate(qf, fused, metric))
+        if score > best_score:
+            best_score, best_params = score, cand
+    return best_params
 
 
 def save_run(run, path: str) -> None:
