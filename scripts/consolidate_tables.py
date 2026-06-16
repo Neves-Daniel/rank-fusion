@@ -29,6 +29,9 @@ for name,path,foldnote in DATASETS:
     print("="*70); print(f"# {name}  ({path})")
     if not os.path.exists(path): print("  AUSENTE"); continue
     cells,M,N,S,K,n = load(path)
+    bpath=os.path.join(os.path.dirname(path),"baselines.csv")     # sparse/dense isolados (eval_significance)
+    base_cells=load(bpath)[0] if os.path.exists(bpath) else {}
+    spath=os.path.join(os.path.dirname(path),"significance.csv")  # testes pareados (eval_significance)
     exp=len(M)*len(N)*len(S)*len(K)
     print(f"  métodos |M|={len(M)} | normalizações |N|={len(N)} | segmentos={sorted(S)} | métricas |K|={len(K)}")
     print(f"  pares (method×norm)={len(cells)} | linhas={n} | esperado |M|·|N|·|S|·|K|={exp} | {'OK' if n==exp else 'FALTAM '+str(exp-n)}")
@@ -96,5 +99,35 @@ for name,path,foldnote in DATASETS:
         print(f"{m}$\\dagger$ & {nm} & {gs(c,'head','precision@5')[0]:.4f} & {gs(c,'head','ndcg@5')[0]:.4f}"
               f" & {gs(c,'tail','precision@5')[0]:.4f} & {tn[0]:.4f}{{\\scriptsize$\\pm${tn[1]:.4f}}} \\\\"
               f"  % rank #{base_rank}")
+    if base_cells:                                   # baselines isolados (sem fusão) como referência
+        print("\\midrule")
+        for iso in ("dense","sparse"):
+            c=base_cells.get((iso,"none"))
+            if not c: continue
+            tn=gs(c,'tail','ndcg@5')
+            print(f"{iso} (no fusion) & --- & {gs(c,'head','precision@5')[0]:.4f} & {gs(c,'head','ndcg@5')[0]:.4f}"
+                  f" & {gs(c,'tail','precision@5')[0]:.4f} & {tn[0]:.4f}{{\\scriptsize$\\pm${tn[1]:.4f}}} \\\\")
     print("\\bottomrule\\end{tabular}\\end{table}")
+
+    # ---- LaTeX: significância pareada (se houver) ----
+    if os.path.exists(spath):
+        import csv as _csv
+        srows=list(_csv.DictReader(open(spath)))
+        print(f"\n  --- LATEX significância ({name}) ---")
+        print("\\begin{table}[t]\\centering\\small")
+        print(f"\\caption{{{name}: paired significance on tail nDCG@5 (Wilcoxon signed-rank; "
+              f"$\\Delta$mean with 95\\% bootstrap CI; {foldnote}). $^{{*}}$ $p<0.05$.}}")
+        print(f"\\label{{tab:sig-{tag}}}")
+        print("\\begin{tabular}{lccr}")
+        print("\\toprule")
+        print("Comparison (tail nDCG@5) & $\\Delta$ mean & 95\\% CI & $p$ \\\\")
+        print("\\midrule")
+        for r in srows:
+            p=float(r["p"]); star="$^{*}$" if p<0.05 else ""
+            comp=(r["comparison"].replace("vs ","vs.\\ ").replace("denso","dense")
+                  .replace("esparso","sparse").replace("ganho da fusão","fusion gain")
+                  .replace("_","\\_"))
+            print(f"{comp} & {float(r['delta']):+.4f}{star} & "
+                  f"[{float(r['ci_lo']):+.4f}, {float(r['ci_hi']):+.4f}] & {p:.1e} \\\\")
+        print("\\bottomrule\\end{tabular}\\end{table}")
     print()

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import math
 import os
-import random
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -95,19 +94,17 @@ def collect(system_folds, tail) -> dict[str, float]:
     return allq
 
 
-def paired_test(a: dict, b: dict, label: str):
+def paired_test(a: dict, b: dict, label: str) -> dict:
     from scipy.stats import wilcoxon
 
     qs = sorted(set(a) & set(b))
     da = np.array([a[q] for q in qs]); db = np.array([b[q] for q in qs])
     diff = da - db
     mean_d = float(diff.mean())
-    rng = random.Random(SEED)
-    boots = []
     n = len(diff)
-    for _ in range(N_BOOT):
-        idx = [rng.randrange(n) for _ in range(n)]
-        boots.append(float(diff[idx].mean()))
+    rng = np.random.default_rng(SEED)                       # bootstrap vetorizado (determinístico)
+    idx = rng.integers(0, n, size=(N_BOOT, n), dtype=np.int32)
+    boots = diff[idx].mean(axis=1)
     lo, hi = np.percentile(boots, [2.5, 97.5])
     try:
         stat, p = wilcoxon(da, db, alternative="two-sided", zero_method="wilcox")
@@ -118,6 +115,8 @@ def paired_test(a: dict, b: dict, label: str):
     sig = "✓ p<0.05" if (p == p and p < 0.05) else ("× n.s." if p == p else "× (degenerado)")
     print(f"  {label:<34} Δmean={mean_d:+.4f}  IC95%=[{lo:+.4f},{hi:+.4f}]  "
           f"p={p:.2e} {sig}  (W/L/T={win}/{lose}/{tie}, n={n})")
+    return {"comparison": label, "delta": mean_d, "ci_lo": float(lo), "ci_hi": float(hi),
+            "p": p, "n": n, "win": win, "lose": lose, "tie": tie}
 
 
 def main():
@@ -130,14 +129,25 @@ def main():
             print(f"  runs ausentes: {e}"); continue
         pooled = load_pooled(cfg.raw_dir)
         mcfg = MetricsConfig(raw_dir=cfg.raw_dir, runs_dir=cfg.runs_dir,
-                             ks=(5,), kinds=("precision", "ndcg"))
+                             ks=(1, 5, 10), kinds=("precision", "ndcg", "recall"))  # = schema do grid
+        from src.metrics import SEGMENTS, metric_names
+        names = metric_names(mcfg.ks, mcfg.kinds)
+        resdir = cfg.runs_dir.replace("runs", "results")
+        os.makedirs(resdir, exist_ok=True)
 
-        # (3) BASELINES ISOLADOS (agregado sobre folds, segmentado)
+        # (3) BASELINES ISOLADOS (agregado sobre folds, segmentado) → baselines.csv (schema do grid)
         print("\n  --- (3) Baselines isolados (mean±std entre folds) ---")
-        for label, tmpl in [("sparse", "sparse.fold{fold}.trec"), ("dense", "dense.fold{fold}.trec")]:
-            r = evaluate_run_set(tmpl, mcfg, pooled, head, tail)
-            tn = r["tail"]["ndcg@5"]; hn = r["head"]["ndcg@5"]
-            print(f"    {label:<7} tail nDCG@5={tn[0]:.4f}±{tn[1]:.4f} | head nDCG@5={hn[0]:.4f}±{hn[1]:.4f}")
+        import csv as _csv
+        with open(os.path.join(resdir, "baselines.csv"), "w", newline="") as fh:
+            w = _csv.writer(fh); w.writerow(["method", "norm", "segment", "metric", "mean", "std"])
+            for label, tmpl in [("sparse", "sparse.fold{fold}.trec"), ("dense", "dense.fold{fold}.trec")]:
+                r = evaluate_run_set(tmpl, mcfg, pooled, head, tail)
+                for s in SEGMENTS:
+                    for nm in names:
+                        mean, std = r[s][nm]
+                        w.writerow([label, "none", s, nm, f"{mean:.6f}", f"{std:.6f}"])
+                tn = r["tail"]["ndcg@5"]; hn = r["head"]["ndcg@5"]
+                print(f"    {label:<7} tail nDCG@5={tn[0]:.4f}±{tn[1]:.4f} | head nDCG@5={hn[0]:.4f}±{hn[1]:.4f}")
 
         # descobre o topo por tail ndcg@5 a partir do CSV
         import csv
@@ -163,12 +173,21 @@ def main():
               f"dense={mean_of(sys_dense):.4f} sparse={mean_of(sys_sparse):.4f}  (comparar c/ CSV)")
 
         print("\n  --- (1) Significância no tail nDCG@5 (Wilcoxon pareado + IC95% bootstrap) ---")
+        sigrows = []
         if top and top != BASE:
-            paired_test(sys_top, sys_base, f"{top[0]}+{top[1]} vs combmnz+zmuv")
-        paired_test(sys_base, sys_dense, "combmnz+zmuv vs denso (ganho da fusão)")
+            sigrows.append(paired_test(sys_top, sys_base, f"{top[0]}+{top[1]} vs combmnz+zmuv"))
+        sigrows.append(paired_test(sys_base, sys_dense, "combmnz+zmuv vs dense (fusion gain)"))
         if top:
-            paired_test(sys_top, sys_dense, f"{top[0]}+{top[1]} vs denso")
-        paired_test(sys_base, sys_sparse, "combmnz+zmuv vs esparso")
+            sigrows.append(paired_test(sys_top, sys_dense, f"{top[0]}+{top[1]} vs dense"))
+        sigrows.append(paired_test(sys_base, sys_sparse, "combmnz+zmuv vs sparse"))
+        with open(os.path.join(resdir, "significance.csv"), "w", newline="") as fh:
+            w = _csv.writer(fh)
+            w.writerow(["comparison", "segment", "metric", "delta", "ci_lo", "ci_hi", "p", "n", "win", "lose", "tie"])
+            for r in sigrows:
+                w.writerow([r["comparison"], "tail", "ndcg@5", f"{r['delta']:.6f}",
+                            f"{r['ci_lo']:.6f}", f"{r['ci_hi']:.6f}", f"{r['p']:.3e}",
+                            r["n"], r["win"], r["lose"], r["tie"]])
+        print(f"  → escrito {resdir}/baselines.csv + significance.csv")
         print()
 
 
