@@ -113,6 +113,31 @@ def test_evaluate_combo_estrutura_e_segmentos():
     assert mean == pytest.approx(1.0)
 
 
+def test_subsample_fold_deterministico_e_alinhado():
+    pytest.importorskip("ranx")
+    from ranx import Run
+
+    from src.fusion import run_to_dict
+    from src.gridsearch import subsample_fold
+
+    qs = [str(i) for i in range(6)]
+    sparse = Run({q: {"label_0": 1.0, "label_2": 0.5} for q in qs}, name="sparse")
+    dense = Run({q: {"label_1": 2.0} for q in qs}, name="dense")
+    qrels_all = {q: {"label_0": 1.0} for q in qs}
+
+    sp, de, qr = subsample_fold(sparse, dense, qrels_all, n=3)
+    sp_q = set(run_to_dict(sp))
+    assert len(sp_q) == 3                              # encolheu p/ n
+    assert sp_q == set(run_to_dict(de)) == set(qr)     # runs E qrels no MESMO conjunto
+    assert sp_q <= set(qs)                             # subconjunto do fold
+    # determinístico (seed fixa) entre chamadas
+    sp2, _, _ = subsample_fold(sparse, dense, qrels_all, n=3)
+    assert set(run_to_dict(sp2)) == sp_q
+    # n=0 ou n≥|fold| → fold inteiro, sem subamostrar
+    assert len(run_to_dict(subsample_fold(sparse, dense, qrels_all, n=0)[0])) == 6
+    assert len(run_to_dict(subsample_fold(sparse, dense, qrels_all, n=99)[0])) == 6
+
+
 def test_evaluate_combo_roda_para_varias_fusoes():
     pytest.importorskip("ranx")
     from ranx import Run

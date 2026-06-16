@@ -22,6 +22,7 @@ from __future__ import annotations
 import csv
 import io
 import os
+import random
 import sys
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
@@ -88,6 +89,7 @@ class GridConfig:
     resume: bool = True   # retoma do checkpoint (.ckpt.csv) pulando combos já feitas
     opt_sample: int = 0   # >0 → subamostra o treino da fusão supervisionada p/ N queries (acelera optimize)
     opt_repeats: int = 1  # >1 → K amostras independentes + seleção do melhor no treino cheio (robustez)
+    eval_sample: int = 0  # >0 → subamostra as queries de CADA fold p/ N (fusão+avaliação+treino); escala (AmazonCat/670K)
 
     def fold_ids(self) -> tuple[int, ...]:
         return self.folds if self.folds is not None else tuple(range(self.n_folds))
@@ -218,10 +220,29 @@ def load_fold_runs(cfg: GridConfig) -> tuple[list[tuple], set[int], set[int]]:
                 raise FileNotFoundError(f"run base ausente: {p} (rode retrieve_sparse/retrieve_dense)")
         sparse_run = load_run(sp, name="sparse")
         dense_run = load_run(de, name="dense")
-        qids = run_to_dict(sparse_run).keys()
-        qrels_fold = {q: qrels_all[q] for q in qids if q in qrels_all}
-        fold_runs.append((sparse_run, dense_run, qrels_fold))
+        fold_runs.append(subsample_fold(sparse_run, dense_run, qrels_all, cfg.eval_sample))
     return fold_runs, head, tail
+
+
+def subsample_fold(sparse_run, dense_run, qrels_all: dict, n: int, seed: int = 42) -> tuple:
+    """Restringe um fold (sparse_run, dense_run, qrels) a uma subamostra DETERMINÍSTICA de
+    `n` queries (seed fixa). Com n=0 (ou fold menor que n) devolve o fold inteiro.
+
+    Aplicada 1× ao carregar → a MESMA amostra vale p/ fusão, avaliação E treino
+    supervisionado de TODOS os métodos. Como a métrica é a média por query, a amostra
+    aleatória é um estimador não-enviesado (mesma amostra p/ todos → ranking justo);
+    corta o custo O(n²) do condorcet e a RAM da fusão+avaliação em folds gigantes."""
+    sd = run_to_dict(sparse_run)
+    if not n or len(sd) <= n:
+        qids = list(sd.keys())
+        return sparse_run, dense_run, {q: qrels_all[q] for q in qids if q in qrels_all}
+    from ranx import Run
+    dd = run_to_dict(dense_run)
+    sample = random.Random(seed).sample(sorted(sd), n)
+    sparse_run = Run({q: sd[q] for q in sample}, name="sparse")
+    dense_run = Run({q: dd[q] for q in sample if q in dd}, name="dense")
+    qrels_fold = {q: qrels_all[q] for q in sample if q in qrels_all}
+    return sparse_run, dense_run, qrels_fold
 
 
 def _evaluate_cell(norm: str, method: str, fold_runs, head, tail, mcfg, cfg) -> dict:
@@ -448,6 +469,11 @@ def main(cfg: GridConfig | None = None) -> None:
                         help="K amostras independentes + seleção do melhor candidato no "
                              "treino completo (robustez à variância de amostra; ex.: 3). "
                              "Mantenha K×opt-sample << treino p/ preservar a aceleração")
+    parser.add_argument("--eval-sample", type=int, default=None,
+                        help="subamostra as queries de CADA fold p/ N (fusão+avaliação+treino) "
+                             "— escala datasets grandes (AmazonCat/670K) e corta o O(n²) do "
+                             "condorcet e a RAM. Estimador não-enviesado; reavalie o topo no "
+                             "fold cheio p/ os números finais. Use com --no-resume (muda a base)")
     args, _ = parser.parse_known_args()
 
     cfg = cfg or GridConfig()
@@ -468,6 +494,8 @@ def main(cfg: GridConfig | None = None) -> None:
         cfg.opt_sample = args.opt_sample
     if args.opt_repeats:
         cfg.opt_repeats = args.opt_repeats
+    if args.eval_sample:
+        cfg.eval_sample = args.eval_sample
 
     ranked = run_grid(cfg)
     print(format_grid_report(ranked, cfg))
