@@ -90,6 +90,7 @@ class GridConfig:
     opt_sample: int = 0   # >0 → subamostra o treino da fusão supervisionada p/ N queries (acelera optimize)
     opt_repeats: int = 1  # >1 → K amostras independentes + seleção do melhor no treino cheio (robustez)
     eval_sample: int = 0  # >0 → subamostra as queries de CADA fold p/ N (fusão+avaliação+treino); escala (AmazonCat/670K)
+    skip_methods: tuple[str, ...] = ()  # fusões a EXCLUIR da grade (ex.: caras no fold cheio: condorcet/probfuse/...)
 
     def fold_ids(self) -> tuple[int, ...]:
         return self.folds if self.folds is not None else tuple(range(self.n_folds))
@@ -474,6 +475,10 @@ def main(cfg: GridConfig | None = None) -> None:
                              "— escala datasets grandes (AmazonCat/670K) e corta o O(n²) do "
                              "condorcet e a RAM. Estimador não-enviesado; reavalie o topo no "
                              "fold cheio p/ os números finais. Use com --no-resume (muda a base)")
+    parser.add_argument("--skip-methods", type=str, default=None,
+                        help="lista separada por vírgula de fusões a EXCLUIR da grade (ex.: "
+                             "'condorcet,wcondorcet,probfuse,segfuse,slidefuse'). Use p/ reavaliar "
+                             "só os métodos baratos no fold cheio sem o O(n²)/OOM dos caros")
     args, _ = parser.parse_known_args()
 
     cfg = cfg or GridConfig()
@@ -496,6 +501,13 @@ def main(cfg: GridConfig | None = None) -> None:
         cfg.opt_repeats = args.opt_repeats
     if args.eval_sample:
         cfg.eval_sample = args.eval_sample
+    if args.skip_methods:
+        skip = {m.strip() for m in args.skip_methods.split(",") if m.strip()}
+        unknown = skip - set(cfg.methods)
+        if unknown:
+            print(f"[aviso] --skip-methods ignora nomes fora da grade: {sorted(unknown)}")
+        cfg.methods = tuple(m for m in cfg.methods if m not in skip)
+        print(f"[skip] excluídas {sorted(skip & set(METHODS))} → grade com {len(cfg.methods)} fusões")
 
     ranked = run_grid(cfg)
     print(format_grid_report(ranked, cfg))

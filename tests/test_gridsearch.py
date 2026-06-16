@@ -113,6 +113,18 @@ def test_evaluate_combo_estrutura_e_segmentos():
     assert mean == pytest.approx(1.0)
 
 
+def test_skip_methods_filtra_a_grade():
+    # filtro do --skip-methods + construção de all_cells (gridsearch.py:367)
+    cfg = GridConfig()
+    n_all = len(cfg.methods)
+    skip = {"condorcet", "wcondorcet", "probfuse", "segfuse", "slidefuse"}
+    cfg.methods = tuple(m for m in cfg.methods if m not in skip)
+    cells = [(m, n) for m in cfg.methods for n in cfg.norms]
+    assert len(cfg.methods) == n_all - len(skip)        # os 5 saíram
+    assert not any(m in skip for m, _ in cells)         # nenhuma célula dos caros
+    assert ("combmnz", "zmuv") in cells                 # os baratos permanecem
+
+
 def test_subsample_fold_deterministico_e_alinhado():
     pytest.importorskip("ranx")
     from ranx import Run
