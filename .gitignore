@@ -24,3 +24,4 @@ notebooks/*.ipynb_checkpoints/
 # Logs soltos (ex.: saída do binário UDLF)
 log.txt
 *_log.txt
+paper/
