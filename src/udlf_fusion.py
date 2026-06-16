@@ -54,6 +54,12 @@ from src.splits import load_pooled, make_folds
 # métodos do UDLF sugeridos pelo grupo (nome nosso → nome no UDLF)
 UDLF_METHODS: dict[str, str] = {"cprr": "CPRR", "lhrr": "LHRR", "rfe": "RFE"}
 
+# defaults OFICIAIS por método, lidos do config.ini do binário UDLF (~/.pyudlf/bin).
+# Cada método tem o SEU K/T de design — não dá para aplicar o do CPRR a todos (LHRR
+# usa K=18, não 20). Usados quando não há override, para cada método rodar autêntico.
+UDLF_DEFAULT_K: dict[str, int] = {"cprr": 20, "lhrr": 18, "rfe": 20}
+UDLF_DEFAULT_T: dict[str, int] = {"cprr": 2, "lhrr": 2, "rfe": 2}
+
 
 @dataclass
 class UdlfConfig:
@@ -68,8 +74,8 @@ class UdlfConfig:
     n_candidates: int = 128              # top-C por recuperador → candidatos do bloco
     label_topl: int = 0                  # L do método (0 = tamanho do bloco)
     block_batch: int = 80                # queries por chamada do pyUDLF (n ≈ batch × bloco)
-    cprr_k: int = 20                     # K do kNN (default CBIR; ajustar p/ blocos pequenos)
-    cprr_t: int = 2                      # T (nº de iterações) do CPRR
+    k_override: int = 0                  # K do kNN; 0 = default oficial do método (CPRR/RFE 20, LHRR 18)
+    t_override: int = 0                  # T (iterações); 0 = default oficial do método (todos 2)
     n_folds: int = 5
     folds: tuple[int, ...] | None = None
     seed: int = 42
@@ -272,7 +278,9 @@ def _run_udlf_batch(rk_paths: list[str], lists_path: str, n: int, block_size: in
 
     m = UDLF_METHODS[cfg.method]
     L = cfg.label_topl if cfg.label_topl > 0 else block_size
-    K = max(1, min(cfg.cprr_k, block_size - 1))
+    k_base = cfg.k_override or UDLF_DEFAULT_K[cfg.method]   # default do método, salvo override
+    K = max(1, min(k_base, block_size - 1))                 # clamp só p/ bloco pequeno
+    T = cfg.t_override or UDLF_DEFAULT_T[cfg.method]
 
     inp = inputType.InputType()
     if cfg.binary_path:
@@ -291,8 +299,7 @@ def _run_udlf_batch(rk_paths: list[str], lists_path: str, n: int, block_size: in
     inp.set_param("EFFICIENCY_EVAL", "FALSE")
     inp.set_param(f"PARAM_{m}_L", L)
     inp.set_param(f"PARAM_{m}_K", K)
-    if cfg.method in {"cprr", "lhrr"}:        # CPRR/LHRR têm o parâmetro T (iterações)
-        inp.set_param(f"PARAM_{m}_T", cfg.cprr_t)
+    inp.set_param(f"PARAM_{m}_T", T)          # CPRR/LHRR/RFE têm o parâmetro T (iterações)
     if len(rk_paths) == 1:
         inp.set_param("UDL_TASK", "UDL")
         inp.set_input_files(rk_paths[0])

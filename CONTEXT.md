@@ -47,8 +47,11 @@ Todos do mesmo grupo (UFMG/UFSJ): França, Rabbi, Salles, Cunha, Rocha, Gonçalv
 4. **UDLF — colaboração UNICAMP/UNESP (Pedronette, jun/2026).** Framework de
    re-ranking e agregação contextual não-supervisionados (11 métodos; sugeridos:
    **RFE** IEEE TIP 2023, **LHRR** IEEE TIP 2019, **CPRR** PRL 2018). Família
-   distinta dos fundidores do ranx, a avaliar lado a lado na mesma grade.
-   Desenho da integração e adaptação ao cenário bipartido: `docs/udlf-integration.md`.
+   distinta dos fundidores do ranx, avaliada lado a lado **na mesma tabela** (mesmos
+   folds/inputs, profundidade padrão). **Implementado** (`src/udlf_fusion.py`, commit
+   122768e): adaptação bipartida por blocos, rótulo→rótulo por co-ocorrência (Opção A),
+   K/T por método. 1º resultado (CPRR Eurlex fold 0) negativo (tail 0.279); LHRR/RFE +
+   5 folds em andamento. Desenho/status: `docs/udlf-integration.md`.
 
 ## Glossário rápido
 - **XMTC:** Extreme Multi-Label Text Classification.

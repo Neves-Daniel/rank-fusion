@@ -63,7 +63,8 @@ rank-fusion/
 │  ├─ download_wiki10.sh        # Wiki10-31K (PECOS xmc-base / archive.org)
 │  ├─ download_xmc.sh           # genérico: qualquer slug do PECOS xmc-base
 │  ├─ demo_*.py                 # demos em subconjunto (sparse, dense, label_desc)
-│  └─ smoke_udlf.py             # smoke test da integração UDLF (em andamento)
+│  ├─ smoke_udlf.py             # smoke test da integração UDLF (passou)
+│  └─ exp_udlf_*.py             # experimentos UDLF: tabela unificada (grid) + sensibilidade ao L (deepblocks)
 ├─ src/
 │  ├─ data.py            # leitura PECOS + helpers multi-dataset (--dataset, --folds)
 │  ├─ splits.py          # 5-fold CV sobre o dataset AGRUPADO (treino+teste)
@@ -73,9 +74,10 @@ rank-fusion/
 │  ├─ retrieve_dense.py  # denso: bi-encoder BERT fine-tuned → run TREC por fold
 │  ├─ fusion.py          # wrappers ranx (7 norm × 25 fusão) + CombMNZ/RRF à mão; learn_fusion_params (superv.)
 │  ├─ metrics.py         # P@k/nDCG@k/Recall@k segmentados overall/cabeça/cauda
-│  └─ gridsearch.py      # varre as 175 combinações; superv. via CV aninhada; ranqueia por cauda + CSV
-├─ tests/                # ~100 testes; CPU por padrão (dublês), GPU/IO opt-in por marker
-├─ docs/udlf-integration.md   # desenho da integração UDLF (não versionado ainda)
+│  ├─ gridsearch.py      # varre as 175 combinações; superv. via CV aninhada; ranqueia por cauda + CSV
+│  └─ udlf_fusion.py     # fusão/re-ranking CONTEXTUAL via UDLF (CPRR/LHRR/RFE); adaptação bipartida por blocos
+├─ tests/                # ~110 testes; CPU por padrão (dublês), GPU/IO opt-in por marker
+├─ docs/udlf-integration.md   # desenho + status da integração UDLF (versionado, commit 122768e)
 └─ data/<dataset>/{raw, runs, rag-labels, results}   # dados e artefatos (não versionados)
 ```
 
@@ -196,7 +198,7 @@ Todas registradas no código/docs; trade-offs explicitados nos próprios arquivo
 | Avaliação segmentada | `src/metrics.py` | P@k/nDCG@k/Recall@k (k∈{1,5,10}) via ranx em 3 recortes (overall/head/tail); média±desvio entre folds; `run_report` compara sparse/dense/fundido |
 | Grid search | `src/gridsearch.py` | **175 combos** fundidos em memória, ranqueados por métrica de cauda (default tail nDCG@5); fusões supervisionadas via **CV aninhada** (`evaluate_combo_supervised`: params do fold k treinados nos outros folds, qrels de cauda, sem vazamento); imprime top-N + posição do CombMNZ+ZMUV; CSV long-format; `--paper` restringe às 6×10 do artigo |
 | Download de dados | `scripts/download_eurlex.sh`, `download_wiki10.sh`, `download_xmc.sh` | Eurlex via HuggingFace; demais via PECOS xmc-base (archive.org), com fetch robusto curl→wget→python |
-| Integração UDLF (em andamento) | `docs/udlf-integration.md`, `scripts/smoke_udlf.py` | Fusão/re-ranking contextual não-supervisionado (CPRR/LHRR/RFE); adaptação bipartida por blocos proposta; smoke test pronto; `src/udlf_fusion.py` ainda não existe |
+| Fusão contextual UDLF | `src/udlf_fusion.py`, `docs/udlf-integration.md`, `scripts/smoke_udlf.py`, `scripts/exp_udlf_*.py` | **Implementado** (commit 122768e + correções 2026-06-16). CPRR/LHRR/RFE via pyUDLF; adaptação bipartida por blocos (rótulo→rótulo por co-ocorrência Y_train, Opção A); K/T por método (defaults oficiais do config.ini); modos FUSION/UDL. Avaliado na MESMA tabela dos 25 ranx (profundidade padrão); "blocos fundos" = sensibilidade ao L à parte. CPRR fold 0 negativo (tail 0.279); LHRR/RFE + 5 folds em andamento |
 | Suíte de testes | `tests/` (~100 testes) | CPU por padrão com dublês (FakeSR/FakeLLM/FakeEncoder); BM25/vLLM/BERT reais opt-in via markers `bm25`/`vllm`/`bert` |
 
 ## 6. Trechos de código notáveis
@@ -394,16 +396,18 @@ sem aprovação: `export LABEL_DESC_MODEL=NousResearch/Meta-Llama-3.1-8B-Instruc
    Atualizar o doc ou criar a pasta?
 3. **Números experimentais:** os resultados citados (tail P@1 0,39→0,46 etc.)
    vêm de CONTEXT.md; o CSV do grid search (`data/.../results/gridsearch.csv`)
-   não está versionado e não há registro do estado dos runs em Wiki10/AmazonCat/
-   Amazon-670K no repositório — não encontrado no código. Para o artigo, vale
-   consolidar os resultados num lugar versionado.
+   não está versionado (em git). Os grids 25×7 de **Eurlex e Wiki10 existem no backup
+   local** `~/nlp/brev-backups/data/<dataset>/results/gridsearch.csv`; AmazonCat/
+   Amazon-670K seguem rodando na Brev. Para o artigo, vale consolidar tudo num lugar
+   versionado (e mesclar as linhas UDLF, ver `gridsearch_with_udlf.csv`).
 4. **Pesos do denso não são salvos** (`retrieve_dense.py` treina e descarta o
    encoder após a inferência) — relevante para a opção C da integração UDLF
    (embeddings de rótulo) e para reprodutibilidade de análises post-hoc.
-5. **UDLF:** o desenho (docs/udlf-integration.md) e o smoke test existem mas não
-   estão commitados, e `src/udlf_fusion.py` ainda não existe. A "decisão em
-   aberto" sobre a fonte do ranking rótulo→rótulo (co-ocorrência vs. BM25 vs.
-   embeddings) precisa ser tomada.
+5. **UDLF:** implementado e commitado (`src/udlf_fusion.py`, commit 122768e). A fonte
+   rótulo→rótulo foi decidida (**Opção A: co-ocorrência em Y_train**, fold-safe). 1º
+   resultado (CPRR fold 0) negativo: tail nDCG@5 0.279, abaixo das fusões ranx — em
+   defaults oficiais e L~216 (limitado pela profundidade da recuperação, não tuning).
+   LHRR/RFE + 5 folds em andamento para a tabela comparativa unificada.
 6. **Sem README.md nem LICENSE** na raiz (a documentação vive nos arquivos-âncora
    CLAUDE/CONTEXT/TECH_STACK/ARCHITECTURE/REQUIREMENTS) — ok para repo de
    pesquisa privado, mas vale decidir antes de tornar público junto ao artigo.

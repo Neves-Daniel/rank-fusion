@@ -20,3 +20,7 @@ venv/
 .pytest_cache/
 notebooks/*.ipynb_checkpoints/
 .DS_Store
+
+# Logs soltos (ex.: saída do binário UDLF)
+log.txt
+*_log.txt

@@ -88,14 +88,16 @@ seja, precisamos de **rankings rótulo→rótulo** além dos doc→rótulo que j
 
 ## Plano incremental
 
-1. `pip install git+https://github.com/UDLF/pyUDLF.git` (local) +
-   `python scripts/smoke_udlf.py` — valida binário, formatos, FUSION e a premissa
-   de blocos independentes. **(pronto para rodar)**
-2. Implementar `src/udlf_fusion.py`: TREC runs → blocos → arquivos RK/NUM →
-   pyUDLF → TREC out (com `--dataset`, `--folds`, fonte rótulo→rótulo plugável).
-3. Eurlex-4K, fold 0, CPRR/LHRR/RFE nos dois modos; avaliar com `metrics.py`
-   (cabeça/cauda) e comparar com a grade ranx.
-4. Se promissor: 5 folds Eurlex → Wiki10 → grandes (protocolo 3-dos-5 folds).
+1. ~~`pip install pyUDLF` + `scripts/smoke_udlf.py`~~ **FEITO** — binário/formatos/FUSION
+   e blocos independentes validados; `python3-tk` exigido (import espúrio do pyUDLF).
+2. ~~Implementar `src/udlf_fusion.py`~~ **FEITO** (commit 122768e + correções 2026-06-16):
+   blocos por query, rótulo→rótulo por **co-ocorrência Y_train (Opção A)**, K/T por
+   método, modos FUSION/UDL. 10 testes puros passando.
+3. Eurlex-4K: CPRR fold 0 já rodado (resultado negativo, ver abaixo). **EM ANDAMENTO**:
+   CPRR/LHRR/RFE nos 5 folds, profundidade padrão, p/ a tabela comparativa unificada
+   (`exp_udlf_grid.py`). LHRR/RFE executando pela 1ª vez.
+4. Se promissor: Wiki10 (grid já local) → grandes (protocolo 3-dos-5 folds). Sensibilidade
+   ao L em paralelo (`exp_udlf_deepblocks.py`). Modo UDL (re-rank do melhor par ranx).
 5. Responder o e-mail: perguntar aos doutorandos como eles adaptam o framework a
    cenários bipartidos/textuais (pode existir receita pronta do grupo).
 
@@ -105,5 +107,20 @@ seja, precisamos de **rankings rótulo→rótulo** além dos doc→rótulo que j
   por blocos + rankings rótulo→rótulo derivados é **nossa** e deve ser descrita
   explicitamente (e idealmente validada com o grupo da UNICAMP).
 - A saída do UDLF não tem escores → só a ordem é comparável; registrar.
-- Parâmetros dos métodos (K, L, T) têm defaults de CBIR (K=20, L=400–1400);
-  precisam de ajuste para blocos de ~257 elementos (ex.: L = tamanho do bloco).
+- Parâmetros dos métodos — defaults OFICIAIS (lidos do `~/.pyudlf/bin/config.ini`,
+  jun/2026): **CPRR** K=20, T=2, L=400 · **LHRR** K=18, T=2, L=1000 · **RFE** K=20,
+  T=2, L=400. O código (`UDLF_DEFAULT_K`/`UDLF_DEFAULT_T`) usa o default de CADA método
+  (não o do CPRR para todos); `k_override`/`t_override` permitem sobrescrever.
+- **L é o gargalo, e é estrutural:** L ≤ N e cada bloco só tem `block_size` vizinhos
+  reais → L roda = tamanho do bloco. Esse tamanho trava na união esparso∪denso (~211
+  no Eurlex fold 0), que trava na **profundidade da recuperação** (top-128/lado, design
+  64+64 cabeça/cauda). Ou seja L roda ~216, não o 400 de design — e só sobe re-recuperando
+  mais fundo (esparso dá local/BM25; denso exige a Brev). Não é escolha de tuning.
+
+## Avaliação comparativa (decisão 2026-06-16)
+
+Os métodos UDLF entram na **MESMA tabela ranqueada** dos 25 ranx × 7 norm, nas mesmas
+condições (mesmos folds, MESMOS inputs sparse-128 ∪ dense-128 = profundidade PADRÃO) —
+apples-to-apples. Dar L~400 só ao UDLF (re-recuperando fundo) seria injusto com a grade;
+isso vira **análise de sensibilidade à parte** (`scripts/exp_udlf_deepblocks.py`). O
+runner da tabela unificada é `scripts/exp_udlf_grid.py` (→ `gridsearch_with_udlf.csv`).
