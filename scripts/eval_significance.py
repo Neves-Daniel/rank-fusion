@@ -120,16 +120,25 @@ def paired_test(a: dict, b: dict, label: str) -> dict:
 
 
 def main():
-    for ds in DATASETS:
+    import argparse
+    ap = argparse.ArgumentParser(description="Baselines isolados + significância (cauda)")
+    ap.add_argument("--psp", action="store_true",
+                    help="inclui PSP@k/PSnDCG@k nos baselines (exige xclib; presente na Brev)")
+    ap.add_argument("--datasets", type=str, default=None,
+                    help="lista separada por vírgula (default: eurlex4k,wiki10-31k)")
+    cli, _ = ap.parse_known_args()
+    datasets = cli.datasets.split(",") if cli.datasets else DATASETS
+    base_kinds = ("precision", "ndcg", "recall") + (("psp", "psndcg") if cli.psp else ())
+    for ds in datasets:
         print("=" * 78); print(f"# {ds}")
         cfg = GridConfig(); apply_dataset(cfg, ds)
         try:
-            fold_runs, head, tail = load_fold_runs(cfg)
+            fold_runs, head, tail, _inv_psp, _n_labels = load_fold_runs(cfg)
         except FileNotFoundError as e:
             print(f"  runs ausentes: {e}"); continue
         pooled = load_pooled(cfg.raw_dir)
         mcfg = MetricsConfig(raw_dir=cfg.raw_dir, runs_dir=cfg.runs_dir,
-                             ks=(1, 5, 10), kinds=("precision", "ndcg", "recall"))  # = schema do grid
+                             ks=(1, 5, 10), kinds=base_kinds)  # = schema do grid (+psp se --psp)
         from src.metrics import SEGMENTS, metric_names
         names = metric_names(mcfg.ks, mcfg.kinds)
         resdir = cfg.runs_dir.replace("runs", "results")

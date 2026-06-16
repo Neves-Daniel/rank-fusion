@@ -8,7 +8,8 @@ três recortes:
   - **tail:** idem para os rótulos de CAUDA.
 
 É o split cabeça/cauda exigido pelo guardrail do projeto (e o que o artigo-base
-reporta nas tabelas). PSP@k/PSnDCG@k (propensity-scored) ficam como extensão futura.
+reporta nas tabelas). PSP@k/PSnDCG@k (propensity-scored, Jain et al. 2016) também
+implementados via xclib (kinds 'psp'/'psndcg'; import lazy — exigem xclib instalado).
 
 Definição da segmentação (decisão registrada por honestidade): restringimos TANTO o
 ranking QUANTO o gold ao conjunto de rótulos do segmento. Assim "tail P@k" mede a
@@ -51,6 +52,8 @@ class MetricsConfig:
     ks: tuple[int, ...] = (1, 5, 10)
     kinds: tuple[str, ...] = ("precision", "ndcg", "recall")  # nomes do ranx
     head_frac: float = 0.20          # Pareto: 20% mais frequentes = cabeça (= sparse/dense)
+    psp_a: float = 0.55              # propensão Jain et al. 2016: A genérico (Wikipedia 0.5, Amazon 0.6)
+    psp_b: float = 1.5              # propensão Jain et al. 2016: B genérico (Wikipedia 0.4, Amazon 2.6)
     n_folds: int = 5
     folds: tuple[int, ...] | None = None   # None = todos; subconjunto p/ "3 dos 5 folds"
     seed: int = 42                   # (não usado aqui; folds vêm dos qids dos runs)
@@ -89,6 +92,61 @@ def _filter_to_cols(scores: dict[str, float], cols: set[int]) -> dict[str, float
     return {l: s for l, s in scores.items() if label_to_col(l) in cols}
 
 
+# ───────────── PSP@k / PSnDCG@k (propensão Jain et al. 2016) via xclib ───────────────
+# Implementação CANÔNICA do xclib (xc_metrics) — import LAZY: só toca o xclib ao calcular
+# PSP/PSnDCG (kinds 'psp'/'psndcg'). A conversão de formato é pura/testável sem o xclib.
+
+def _runs_to_sparse(run: dict, qrels: dict, n_labels: int):
+    """(run, qrels) → (pred_csr, true_csr) [n_queries × n_labels], MESMA ordem de linhas.
+    `pred` guarda a ORDEM do run como escores positivos decrescentes (robusto a escore
+    0/negativo do zmuv: só a ordem importa p/ o top-k); `true` é binário. Função PURA
+    (scipy.sparse) → testável sem o xclib. Só queries com gold entram (ordem determinística)."""
+    import scipy.sparse as sp
+
+    qids = sorted(qrels)
+    rp, cp, vp, rt, ct = [], [], [], [], []
+    for i, q in enumerate(qids):
+        ranked = sorted(run.get(q, {}), key=lambda l: -run[q][l])
+        m = len(ranked)
+        for r, l in enumerate(ranked):
+            rp.append(i); cp.append(label_to_col(l)); vp.append(float(m - r))  # >0, ordem preservada
+        for l in qrels[q]:
+            rt.append(i); ct.append(label_to_col(l))
+    pred = sp.csr_matrix((vp, (rp, cp)), shape=(len(qids), n_labels))
+    true = sp.csr_matrix((np.ones(len(rt)), (rt, ct)), shape=(len(qids), n_labels))
+    return pred, true
+
+
+def inv_propensity(label_cols: list[list[int]], n_labels: int, a: float = 0.55, b: float = 1.5):
+    """Pesos de propensão INVERSA (Jain et al. 2016) via xclib `compute_inv_propesity`
+    (canônico). Estatística marginal do rótulo no corpus agrupado. Import lazy do xclib.
+    A/B genéricos por padrão (Jain: Wikipedia A=0.5/B=0.4, Amazon A=0.6/B=2.6)."""
+    import scipy.sparse as sp
+    from xclib.evaluation.xc_metrics import compute_inv_propesity
+
+    rows, cols = [], []
+    for i, cs in enumerate(label_cols):
+        for c in cs:
+            rows.append(i); cols.append(c)
+    Y = sp.csr_matrix((np.ones(len(rows)), (rows, cols)), shape=(len(label_cols), n_labels))
+    return compute_inv_propesity(Y, a, b)
+
+
+def _eval_psp(run: dict, qrels: dict, inv_psp, ks: tuple[int, ...], n_labels: int) -> dict[str, float]:
+    """PSP@k/PSnDCG@k via xclib (`xc_metrics.Metrics.eval`) — canônico. Import lazy."""
+    from xclib.evaluation.xc_metrics import Metrics
+
+    pred, true = _runs_to_sparse(run, qrels, n_labels)
+    acc = Metrics(true_labels=true, inv_psp=inv_psp)
+    res = acc.eval(pred, max(ks))     # [P@k, nDCG@k, PSP@k, PSnDCG@k], arrays cumulativos @1..K
+    psp, psndcg = res[2], res[3]
+    out: dict[str, float] = {}
+    for k in ks:
+        out[f"psp@{k}"] = float(psp[k - 1])
+        out[f"psndcg@{k}"] = float(psndcg[k - 1])
+    return out
+
+
 def segment(
     run: dict[str, dict[str, float]],
     qrels: dict[str, dict[str, float]],
@@ -112,21 +170,32 @@ def evaluate(
     qrels: dict[str, dict[str, float]],
     ks: tuple[int, ...],
     kinds: tuple[str, ...],
+    inv_psp=None,
+    n_labels: int | None = None,
 ) -> dict[str, float]:
-    """P@k/nDCG@k/Recall@k via ranx (média sobre as queries). Import lazy do ranx."""
-    from ranx import Qrels, Run
-    from ranx import evaluate as ranx_evaluate
-
+    """P@k/nDCG@k/Recall@k via ranx; PSP@k/PSnDCG@k via xclib. Média sobre as queries.
+    Imports lazy. Se `kinds` incluir 'psp'/'psndcg', exige `inv_psp` + `n_labels`."""
     names = metric_names(ks, kinds)
     if not qrels:
         return {n: float("nan") for n in names}
-    # ranx exige inner-dict não-vazio no Run; query sem candidato no segmento vira
-    # um placeholder que não casa com o gold (todas as métricas = 0 p/ ela).
-    run_safe = {q: (docs if docs else {"__none__": 0.0}) for q, docs in run.items()}
-    res = ranx_evaluate(Qrels(qrels), Run(run_safe), names)
-    if not isinstance(res, dict):     # ranx devolve float quando há 1 só métrica
-        res = {names[0]: res}
-    return {n: float(res[n]) for n in names}
+    out: dict[str, float] = {}
+    ranx_kinds = tuple(k for k in kinds if k in ("precision", "ndcg", "recall"))
+    if ranx_kinds:
+        from ranx import Qrels, Run
+        from ranx import evaluate as ranx_evaluate
+        rnames = metric_names(ks, ranx_kinds)
+        # ranx exige inner-dict não-vazio; query sem candidato vira placeholder (métricas=0).
+        run_safe = {q: (docs if docs else {"__none__": 0.0}) for q, docs in run.items()}
+        res = ranx_evaluate(Qrels(qrels), Run(run_safe), rnames)
+        if not isinstance(res, dict):     # ranx devolve float quando há 1 só métrica
+            res = {rnames[0]: res}
+        out.update({n: float(res[n]) for n in rnames})
+    prop_kinds = tuple(k for k in kinds if k in ("psp", "psndcg"))
+    if prop_kinds:
+        if inv_psp is None or n_labels is None:
+            raise ValueError("PSP/PSnDCG exigem inv_psp + n_labels (ver evaluate_run_set)")
+        out.update(_eval_psp(run, qrels, inv_psp, ks, n_labels))
+    return {n: out.get(n, float("nan")) for n in names}
 
 
 def evaluate_segmented(
@@ -135,14 +204,17 @@ def evaluate_segmented(
     head: set[int],
     tail: set[int],
     cfg: MetricsConfig,
+    inv_psp=None,
+    n_labels: int | None = None,
 ) -> dict[str, dict[str, float]]:
-    """{overall, head, tail} → cada um um dict de métricas."""
+    """{overall, head, tail} → cada um um dict de métricas. PSP usa o MESMO inv_psp (peso
+    por rótulo, global); no recorte cabeça/cauda só os rótulos do segmento contribuem."""
     run_h, qrels_h = segment(run, qrels, head)
     run_t, qrels_t = segment(run, qrels, tail)
     return {
-        "overall": evaluate(run, qrels, cfg.ks, cfg.kinds),
-        "head": evaluate(run_h, qrels_h, cfg.ks, cfg.kinds),
-        "tail": evaluate(run_t, qrels_t, cfg.ks, cfg.kinds),
+        "overall": evaluate(run, qrels, cfg.ks, cfg.kinds, inv_psp, n_labels),
+        "head": evaluate(run_h, qrels_h, cfg.ks, cfg.kinds, inv_psp, n_labels),
+        "tail": evaluate(run_t, qrels_t, cfg.ks, cfg.kinds, inv_psp, n_labels),
     }
 
 
@@ -173,6 +245,8 @@ def evaluate_run_set(
 
     Pula folds cujo arquivo não existe (avalia os disponíveis e avisa)."""
     qrels_all = build_qrels(pooled)
+    needs_psp = any(k in ("psp", "psndcg") for k in cfg.kinds)
+    inv_psp = inv_propensity(pooled.label_cols, pooled.n_labels, cfg.psp_a, cfg.psp_b) if needs_psp else None
     per_fold: dict[str, list[dict[str, float]]] = {s: [] for s in SEGMENTS}
     n_used = 0
     for f in cfg.fold_ids():
@@ -182,7 +256,7 @@ def evaluate_run_set(
             continue
         run = run_to_dict(load_run(path))
         qrels_fold = {qid: qrels_all[qid] for qid in run if qid in qrels_all}
-        seg = evaluate_segmented(run, qrels_fold, head, tail, cfg)
+        seg = evaluate_segmented(run, qrels_fold, head, tail, cfg, inv_psp, pooled.n_labels)
         for s in SEGMENTS:
             per_fold[s].append(seg[s])
         n_used += 1

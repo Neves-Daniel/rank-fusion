@@ -15,8 +15,10 @@ import pytest
 
 from src.metrics import (
     MetricsConfig,
+    _runs_to_sparse,
     aggregate,
     build_qrels,
+    evaluate,
     evaluate_segmented,
     label_to_col,
     metric_names,
@@ -85,6 +87,28 @@ def test_aggregate_media_e_desvio():
 
 
 # ─────────────────────── métricas via ranx (calculáveis na mão) ────────────────────
+
+def test_runs_to_sparse_ordem_e_alinhamento():
+    # parte PURA do PSP (sem xclib): pred guarda a ORDEM como escore positivo decrescente;
+    # true binário; mesma ordem de linhas; só queries com gold.
+    run = {"5": {"label_0": 0.1, "label_2": 0.9}, "7": {"label_1": 0.5}}
+    qrels = {"5": {"label_0": 1.0, "label_2": 1.0}, "7": {"label_1": 1.0}}
+    pred, true = _runs_to_sparse(run, qrels, 3)
+    assert pred.shape == (2, 3) and true.shape == (2, 3)
+    assert true.nnz == 3                                   # 3 rótulos gold no total
+    row5 = pred[0].toarray()[0]                            # qids ordenados → "5" é a linha 0
+    assert row5[2] > row5[0] > 0                           # label_2 (0.9) ranqueado acima de label_0 (0.1)
+
+
+def test_evaluate_psp_exige_inv_psp():
+    # 'psp'/'psndcg' sem inv_psp → erro claro (não importa o xclib silenciosamente)
+    run = {"q": {"label_0": 1.0}}
+    qrels = {"q": {"label_0": 1.0}}
+    with pytest.raises(ValueError):
+        evaluate(run, qrels, (1,), ("psp",))
+    # caminho ranx puro segue funcionando sem inv_psp
+    assert "precision@1" in evaluate(run, qrels, (1,), ("precision",))
+
 
 def test_evaluate_valores_calculaveis():
     pytest.importorskip("ranx")

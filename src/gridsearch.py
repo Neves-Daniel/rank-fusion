@@ -51,6 +51,7 @@ from src.metrics import (
     aggregate,
     build_qrels,
     evaluate_segmented,
+    inv_propensity,
     label_to_col,
     metric_names,
 )
@@ -91,13 +92,16 @@ class GridConfig:
     opt_repeats: int = 1  # >1 → K amostras independentes + seleção do melhor no treino cheio (robustez)
     eval_sample: int = 0  # >0 → subamostra as queries de CADA fold p/ N (fusão+avaliação+treino); escala (AmazonCat/670K)
     skip_methods: tuple[str, ...] = ()  # fusões a EXCLUIR da grade (ex.: caras no fold cheio: condorcet/probfuse/...)
+    psp_a: float = 0.55   # propensão Jain et al. 2016 (PSP@k/PSnDCG@k via xclib)
+    psp_b: float = 1.5
 
     def fold_ids(self) -> tuple[int, ...]:
         return self.folds if self.folds is not None else tuple(range(self.n_folds))
 
     def metrics_config(self) -> MetricsConfig:
         return MetricsConfig(ks=self.ks, kinds=self.kinds, head_frac=self.head_frac,
-                             n_folds=self.n_folds, folds=self.folds)
+                             n_folds=self.n_folds, folds=self.folds,
+                             psp_a=self.psp_a, psp_b=self.psp_b)
 
 
 # ─────────────────────── avaliação de UMA combinação (testável) ────────────────────
@@ -110,6 +114,8 @@ def evaluate_combo(
     tail: set[int],
     mcfg: MetricsConfig,
     params: dict | None = None,
+    inv_psp=None,
+    n_labels: int | None = None,
 ) -> dict[str, dict[str, tuple[float, float]]]:
     """Funde (norm × method) em cada fold e agrega as métricas segmentadas.
 
@@ -120,7 +126,7 @@ def evaluate_combo(
     per_fold: dict[str, list[dict]] = {s: [] for s in SEGMENTS}
     for sparse_run, dense_run, qrels_fold in fold_runs:
         fused = fuse_runs([sparse_run, dense_run], norm=norm, method=method, params=params)
-        seg = evaluate_segmented(run_to_dict(fused), qrels_fold, head, tail, mcfg)
+        seg = evaluate_segmented(run_to_dict(fused), qrels_fold, head, tail, mcfg, inv_psp, n_labels)
         for s in SEGMENTS:
             per_fold[s].append(seg[s])
     return {s: aggregate(per_fold[s]) for s in SEGMENTS}
@@ -158,6 +164,8 @@ def evaluate_combo_supervised(
     select_metric: str,
     opt_sample: int = 0,
     opt_repeats: int = 1,
+    inv_psp=None,
+    n_labels: int | None = None,
 ) -> dict[str, dict[str, tuple[float, float]]]:
     """Avalia uma fusão SUPERVISIONADA via CV ANINHADA: para fundir o fold k, aprende
     os parâmetros nos OUTROS folds (params disjuntos do teste → sem vazamento), com os
@@ -186,7 +194,7 @@ def evaluate_combo_supervised(
         )
         sparse_k, dense_k, qrels_k = fold_runs[k]
         fused = fuse_runs([sparse_k, dense_k], norm=norm, method=method, params=params)
-        seg = evaluate_segmented(run_to_dict(fused), qrels_k, head, tail, mcfg)
+        seg = evaluate_segmented(run_to_dict(fused), qrels_k, head, tail, mcfg, inv_psp, n_labels)
         for s in SEGMENTS:
             per_fold[s].append(seg[s])
     return {s: aggregate(per_fold[s]) for s in SEGMENTS}
@@ -205,9 +213,10 @@ def rank_records(
 
 # ─────────────────────────── orquestração (carrega disco) ──────────────────────────
 
-def load_fold_runs(cfg: GridConfig) -> tuple[list[tuple], set[int], set[int]]:
-    """Carrega os runs base esparso+denso de cada fold (uma vez) + qrels do fold, e
-    devolve também os conjuntos cabeça/cauda globais. Falha se faltar algum run."""
+def load_fold_runs(cfg: GridConfig):
+    """Carrega os runs base esparso+denso de cada fold (uma vez) + qrels do fold; devolve
+    (fold_runs, head, tail, inv_psp, n_labels). `inv_psp` (xclib, propensão Jain) só é
+    computado se cfg.kinds pedir 'psp'/'psndcg' — senão None (não toca o xclib)."""
     pooled = load_pooled(cfg.raw_dir)
     head, tail = head_tail_split(pooled.label_cols, pooled.n_labels, cfg.head_frac)
     qrels_all = build_qrels(pooled)
@@ -222,7 +231,10 @@ def load_fold_runs(cfg: GridConfig) -> tuple[list[tuple], set[int], set[int]]:
         sparse_run = load_run(sp, name="sparse")
         dense_run = load_run(de, name="dense")
         fold_runs.append(subsample_fold(sparse_run, dense_run, qrels_all, cfg.eval_sample))
-    return fold_runs, head, tail
+    needs_psp = any(k in ("psp", "psndcg") for k in cfg.kinds)
+    inv_psp = (inv_propensity(pooled.label_cols, pooled.n_labels, cfg.psp_a, cfg.psp_b)
+               if needs_psp else None)
+    return fold_runs, head, tail, inv_psp, pooled.n_labels
 
 
 def subsample_fold(sparse_run, dense_run, qrels_all: dict, n: int, seed: int = 42) -> tuple:
@@ -246,7 +258,8 @@ def subsample_fold(sparse_run, dense_run, qrels_all: dict, n: int, seed: int = 4
     return sparse_run, dense_run, qrels_fold
 
 
-def _evaluate_cell(norm: str, method: str, fold_runs, head, tail, mcfg, cfg) -> dict:
+def _evaluate_cell(norm: str, method: str, fold_runs, head, tail, mcfg, cfg,
+                   inv_psp=None, n_labels=None) -> dict:
     """Avalia UMA combinação (norma × fusão) — supervisionada (CV aninhada) ou não.
     Unidade de trabalho compartilhada pelos caminhos serial e paralelo."""
     if method in SUPERVISED:
@@ -254,10 +267,11 @@ def _evaluate_cell(norm: str, method: str, fold_runs, head, tail, mcfg, cfg) -> 
             norm, method, fold_runs, head, tail, mcfg,
             cfg.select_segment, cfg.select_metric,
             opt_sample=cfg.opt_sample, opt_repeats=cfg.opt_repeats,
+            inv_psp=inv_psp, n_labels=n_labels,
         )
     else:
         params = method_params(method, k=cfg.rrf_k, phi=cfg.rbc_phi, gamma=cfg.gmnz_gamma)
-        agg = evaluate_combo(norm, method, fold_runs, head, tail, mcfg, params)
+        agg = evaluate_combo(norm, method, fold_runs, head, tail, mcfg, params, inv_psp, n_labels)
     return {"norm": norm, "method": method, "agg": agg}
 
 
@@ -279,7 +293,8 @@ def _pool_init() -> None:
 def _pool_eval(task):
     method, norm = task        # all_cells = (method, norm)
     s = _SHARED
-    return _evaluate_cell(norm, method, s["fold_runs"], s["head"], s["tail"], s["mcfg"], s["cfg"])
+    return _evaluate_cell(norm, method, s["fold_runs"], s["head"], s["tail"], s["mcfg"],
+                          s["cfg"], s.get("inv_psp"), s.get("n_labels"))
 
 
 # ─────────────────────── checkpoint (resume + à prova de crash) ─────────────────────
@@ -327,7 +342,8 @@ def load_checkpoint(path: str, names: list[str]) -> dict:
             if sum(len(v) for v in agg.values()) >= expected}
 
 
-def _run_cells(cells, fold_runs, head, tail, mcfg, cfg, workers, ckpt, names, base_done, total):
+def _run_cells(cells, fold_runs, head, tail, mcfg, cfg, workers, ckpt, names, base_done, total,
+               inv_psp=None, n_labels=None):
     """Processa uma leva de combos, gravando cada uma no checkpoint ao concluir.
     workers>1 → process pool (fork); pode levantar BrokenProcessPool (tratado acima)."""
     done = base_done
@@ -335,7 +351,8 @@ def _run_cells(cells, fold_runs, head, tail, mcfg, cfg, workers, ckpt, names, ba
         import multiprocessing as mp
         from concurrent.futures import ProcessPoolExecutor, as_completed
 
-        _SHARED.update(fold_runs=fold_runs, head=head, tail=tail, mcfg=mcfg, cfg=cfg)
+        _SHARED.update(fold_runs=fold_runs, head=head, tail=tail, mcfg=mcfg, cfg=cfg,
+                       inv_psp=inv_psp, n_labels=n_labels)
         ctx = mp.get_context("fork")
         with ProcessPoolExecutor(max_workers=workers, mp_context=ctx,
                                  initializer=_pool_init) as ex:
@@ -347,7 +364,7 @@ def _run_cells(cells, fold_runs, head, tail, mcfg, cfg, workers, ckpt, names, ba
                 print(f"  ({done}/{total}) {rec['method']}+{rec['norm']}", flush=True)
     else:
         for (method, norm) in cells:
-            rec = _evaluate_cell(norm, method, fold_runs, head, tail, mcfg, cfg)
+            rec = _evaluate_cell(norm, method, fold_runs, head, tail, mcfg, cfg, inv_psp, n_labels)
             _append_checkpoint(ckpt, rec, names)
             done += 1
             print(f"  ({done}/{total}) {method}+{norm}", flush=True)
@@ -363,7 +380,7 @@ def run_grid(cfg: GridConfig | None = None) -> list[dict]:
     permite continuar de um run interrompido — só relançar o mesmo comando."""
     cfg = cfg or GridConfig()
     mcfg = cfg.metrics_config()
-    fold_runs, head, tail = load_fold_runs(cfg)
+    fold_runs, head, tail, inv_psp, n_labels = load_fold_runs(cfg)
     names = metric_names(cfg.ks, cfg.kinds)
     all_cells = [(method, norm) for method in cfg.methods for norm in cfg.norms]
     total = len(all_cells)
@@ -385,7 +402,7 @@ def run_grid(cfg: GridConfig | None = None) -> list[dict]:
     while remaining:
         try:
             _run_cells(remaining, fold_runs, head, tail, mcfg, cfg, workers, ckpt, names,
-                       base_done=len(done), total=total)
+                       base_done=len(done), total=total, inv_psp=inv_psp, n_labels=n_labels)
         except BrokenProcessPool:
             done = load_checkpoint(ckpt, names)          # o que sobreviveu está salvo
             remaining = [c for c in all_cells if c not in done]
@@ -479,6 +496,9 @@ def main(cfg: GridConfig | None = None) -> None:
                         help="lista separada por vírgula de fusões a EXCLUIR da grade (ex.: "
                              "'condorcet,wcondorcet,probfuse,segfuse,slidefuse'). Use p/ reavaliar "
                              "só os métodos baratos no fold cheio sem o O(n²)/OOM dos caros")
+    parser.add_argument("--psp", action="store_true",
+                        help="adiciona PSP@k/PSnDCG@k (propensão Jain et al. 2016 via xclib) "
+                             "às métricas da grade. Exige xclib instalado (presente na Brev)")
     args, _ = parser.parse_known_args()
 
     cfg = cfg or GridConfig()
@@ -501,6 +521,8 @@ def main(cfg: GridConfig | None = None) -> None:
         cfg.opt_repeats = args.opt_repeats
     if args.eval_sample:
         cfg.eval_sample = args.eval_sample
+    if args.psp:
+        cfg.kinds = tuple(cfg.kinds) + ("psp", "psndcg")
     if args.skip_methods:
         skip = {m.strip() for m in args.skip_methods.split(",") if m.strip()}
         unknown = skip - set(cfg.methods)
