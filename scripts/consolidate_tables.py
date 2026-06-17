@@ -99,42 +99,45 @@ for name,path,foldnote in DATASETS:
         print(line)
     print("\\bottomrule\\end{tabular}\\end{table*}")
 
-    # ---- LaTeX: top-10 segmentado (cabeça/cauda) ----
+    # ---- LaTeX: top-10 segmentado (cabeça/cauda + propensão) ----
     def gs(c,seg,met):
         v=c.get((seg,met)); return v if v else (float('nan'),0.0)
+    def f4(x): return "--" if x!=x else f"{x:.4f}"   # x!=x detecta NaN (ex.: PSP ausente)
+    def seg_row(label, nm, c):
+        """Linha: Head(P@5,nDCG@5) | Tail(P@5,nDCG@5±std) | Propensity(PSP@5,PSnDCG@5).
+        PSP/PSnDCG vêm do segmento overall (são propensity-scored = já ponderam a cauda)."""
+        tn=gs(c,'tail','ndcg@5')
+        tn_s=f"{f4(tn[0])}{{\\scriptsize$\\pm${tn[1]:.4f}}}" if tn[0]==tn[0] else "--"
+        return (f"{label} & {nm} & {f4(gs(c,'head','precision@5')[0])} & {f4(gs(c,'head','ndcg@5')[0])}"
+                f" & {f4(gs(c,'tail','precision@5')[0])} & {tn_s}"
+                f" & {f4(gs(c,'overall','psp@5')[0])} & {f4(gs(c,'overall','psndcg@5')[0])} \\\\")
     print(f"\n  --- LATEX top-10 segmentado ({name}) ---")
-    print("\\begin{table}[t]\\centering\\small")
+    print("\\begin{table*}[t]\\centering\\small")
     print(f"\\caption{{{name}: top-10 fusion$\\times$normalization pairs by tail nDCG@5 "
           f"({foldnote}; mean$\\pm$std over folds for tail nDCG@5, mean otherwise). "
+          f"PSP@5/PSnDCG@5 are propensity-scored (Jain et al.\\ 2016); ``--'' = not computed. "
           f"$\\dagger$ = baseline CombMNZ+ZMUV.}}")
     print(f"\\label{{tab:top-{tag}}}")
-    print("\\begin{tabular}{llcccc}")
+    print("\\begin{tabular}{llcccccc}")
     print("\\toprule")
-    print("& & \\multicolumn{2}{c}{Head} & \\multicolumn{2}{c}{Tail} \\\\")
-    print("\\cmidrule(lr){3-4}\\cmidrule(lr){5-6}")
-    print("Fusion & Norm & P@5 & nDCG@5 & P@5 & nDCG@5 \\\\")
+    print("& & \\multicolumn{2}{c}{Head} & \\multicolumn{2}{c}{Tail} & \\multicolumn{2}{c}{Propensity} \\\\")
+    print("\\cmidrule(lr){3-4}\\cmidrule(lr){5-6}\\cmidrule(lr){7-8}")
+    print("Fusion & Norm & P@5 & nDCG@5 & P@5 & nDCG@5 & PSP@5 & PSnDCG@5 \\\\")
     print("\\midrule")
     for (m,nm),c in rk[:10]:
         dag="$\\dagger$" if (m,nm)==BASE else ""
-        tn=gs(c,'tail','ndcg@5')
-        print(f"{m}{dag} & {nm} & {gs(c,'head','precision@5')[0]:.4f} & {gs(c,'head','ndcg@5')[0]:.4f}"
-              f" & {gs(c,'tail','precision@5')[0]:.4f} & {tn[0]:.4f}{{\\scriptsize$\\pm${tn[1]:.4f}}} \\\\")
+        print(seg_row(f"{m}{dag}", nm, c))
     # se o baseline não estiver no top-10, anexa marcado
     if base_rank and base_rank>10:
-        (m,nm)=BASE; c=cells[BASE]; tn=gs(c,'tail','ndcg@5')
         print("\\midrule")
-        print(f"{m}$\\dagger$ & {nm} & {gs(c,'head','precision@5')[0]:.4f} & {gs(c,'head','ndcg@5')[0]:.4f}"
-              f" & {gs(c,'tail','precision@5')[0]:.4f} & {tn[0]:.4f}{{\\scriptsize$\\pm${tn[1]:.4f}}} \\\\"
-              f"  % rank #{base_rank}")
+        print(seg_row(f"{BASE[0]}$\\dagger$", BASE[1], cells[BASE])+f"  % rank #{base_rank}")
     if base_cells:                                   # baselines isolados (sem fusão) como referência
         print("\\midrule")
         for iso in ("dense","sparse"):
             c=base_cells.get((iso,"none"))
             if not c: continue
-            tn=gs(c,'tail','ndcg@5')
-            print(f"{iso} (no fusion) & --- & {gs(c,'head','precision@5')[0]:.4f} & {gs(c,'head','ndcg@5')[0]:.4f}"
-                  f" & {gs(c,'tail','precision@5')[0]:.4f} & {tn[0]:.4f}{{\\scriptsize$\\pm${tn[1]:.4f}}} \\\\")
-    print("\\bottomrule\\end{tabular}\\end{table}")
+            print(seg_row(f"{iso} (no fusion)", "---", c))
+    print("\\bottomrule\\end{tabular}\\end{table*}")
 
     # ---- LaTeX: significância pareada (se houver) ----
     if os.path.exists(spath):
