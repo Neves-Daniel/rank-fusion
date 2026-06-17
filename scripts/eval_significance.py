@@ -1,4 +1,7 @@
-"""Baselines isolados + significância estatística (Eurlex/Wiki10 — runs locais).
+"""Baselines isolados + significância estatística.
+
+Roda local nos datasets pequenos (Eurlex/Wiki10, fold completo) e, com --eval-sample,
+também em escala na Brev (AmazonCat/670K) sobre a MESMA amostra do gridsearch.
 
 Responde duas lacunas pra fechar a parte experimental:
   (3) BASELINES ISOLADOS — avalia o esparso e o denso SOZINHOS (sem fusão), segmentados
@@ -23,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
-from src.data import apply_dataset
+from src.data import apply_dataset, parse_folds
 from src.fusion import SUPERVISED, fuse_runs, method_params, run_to_dict
 from src.gridsearch import (
     GridConfig,
@@ -32,9 +35,14 @@ from src.gridsearch import (
     load_fold_runs,
 )
 from src.fusion import learn_fusion_params
-from src.metrics import MetricsConfig, evaluate_run_set, segment
-from src.splits import load_pooled
-from src.retrieve_sparse import head_tail_split
+from src.metrics import (
+    MetricsConfig,
+    SEGMENTS,
+    aggregate,
+    evaluate_segmented,
+    metric_names,
+    segment,
+)
 
 DATASETS = ["eurlex4k", "wiki10-31k"]   # runs locais; AmazonCat/670K = Brev (runs gigantes)
 BASE = ("combmnz", "zmuv")
@@ -86,6 +94,18 @@ def isolated_per_fold(which: int, fold_runs) -> list[tuple[dict, dict]]:
     return [(run_to_dict(fr[which]), fr[2]) for fr in fold_runs]
 
 
+def baselines_from_folds(which, fold_runs, head, tail, mcfg, inv_psp, n_labels):
+    """Segmentado mean±std de um recuperador isolado (which=0 esparso, 1 denso), computado a
+    partir do fold_runs (já subamostrado se --eval-sample). Idêntico ao evaluate_run_set
+    quando eval_sample=0, e tratável em escala (não recarrega os folds completos do disco)."""
+    per = {s: [] for s in SEGMENTS}
+    for fr in fold_runs:
+        seg = evaluate_segmented(run_to_dict(fr[which]), fr[2], head, tail, mcfg, inv_psp, n_labels)
+        for s in SEGMENTS:
+            per[s].append(seg[s])
+    return {s: aggregate(per[s]) for s in SEGMENTS}
+
+
 def collect(system_folds, tail) -> dict[str, float]:
     """Une as métricas por-query de todos os folds (qids disjuntos)."""
     allq = {}
@@ -126,31 +146,44 @@ def main():
                     help="inclui PSP@k/PSnDCG@k nos baselines (exige xclib; presente na Brev)")
     ap.add_argument("--datasets", type=str, default=None,
                     help="lista separada por vírgula (default: eurlex4k,wiki10-31k)")
+    ap.add_argument("--eval-sample", type=int, default=0,
+                    help="subamostra as queries de CADA fold p/ N (mesma amostra determinística "
+                         "do gridsearch, seed 42) — torna AmazonCat/670K tratável. 0 = fold inteiro")
+    ap.add_argument("--folds", type=str, default=None,
+                    help="quais folds avaliar, ex.: '0,1,2' (default: todos os presentes)")
+    ap.add_argument("--grid-csv", type=str, default="gridsearch.csv",
+                    help="nome do CSV da grade (em results/) p/ achar o topo por tail nDCG@5 "
+                         "(ex.: gridsearch_sample.csv no AmazonCat amostrado)")
     cli, _ = ap.parse_known_args()
     datasets = cli.datasets.split(",") if cli.datasets else DATASETS
-    base_kinds = ("precision", "ndcg", "recall") + (("psp", "psndcg") if cli.psp else ())
+    psp_kinds = ("psp", "psndcg") if cli.psp else ()
+    base_kinds = ("precision", "ndcg", "recall") + psp_kinds
     for ds in datasets:
         print("=" * 78); print(f"# {ds}")
         cfg = GridConfig(); apply_dataset(cfg, ds)
+        cfg.eval_sample = cli.eval_sample
+        if cli.folds:
+            cfg.folds = parse_folds(cli.folds)
+        cfg.kinds = tuple(cfg.kinds) + psp_kinds   # p/ load_fold_runs computar inv_psp (se --psp)
         try:
-            fold_runs, head, tail, _inv_psp, _n_labels = load_fold_runs(cfg)
+            fold_runs, head, tail, inv_psp, n_labels = load_fold_runs(cfg)
         except FileNotFoundError as e:
             print(f"  runs ausentes: {e}"); continue
-        pooled = load_pooled(cfg.raw_dir)
         mcfg = MetricsConfig(raw_dir=cfg.raw_dir, runs_dir=cfg.runs_dir,
                              ks=(1, 5, 10), kinds=base_kinds)  # = schema do grid (+psp se --psp)
-        from src.metrics import SEGMENTS, metric_names
         names = metric_names(mcfg.ks, mcfg.kinds)
         resdir = cfg.runs_dir.replace("runs", "results")
         os.makedirs(resdir, exist_ok=True)
+        if cli.eval_sample:
+            print(f"  [eval-sample] {cli.eval_sample} queries/fold (folds={list(cfg.fold_ids())})")
 
-        # (3) BASELINES ISOLADOS (agregado sobre folds, segmentado) → baselines.csv (schema do grid)
+        # (3) BASELINES ISOLADOS (do fold_runs subamostrado, segmentado) → baselines.csv (schema do grid)
         print("\n  --- (3) Baselines isolados (mean±std entre folds) ---")
         import csv as _csv
         with open(os.path.join(resdir, "baselines.csv"), "w", newline="") as fh:
             w = _csv.writer(fh); w.writerow(["method", "norm", "segment", "metric", "mean", "std"])
-            for label, tmpl in [("sparse", "sparse.fold{fold}.trec"), ("dense", "dense.fold{fold}.trec")]:
-                r = evaluate_run_set(tmpl, mcfg, pooled, head, tail)
+            for label, which in [("sparse", 0), ("dense", 1)]:
+                r = baselines_from_folds(which, fold_runs, head, tail, mcfg, inv_psp, n_labels)
                 for s in SEGMENTS:
                     for nm in names:
                         mean, std = r[s][nm]
