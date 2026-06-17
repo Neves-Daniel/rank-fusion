@@ -12,14 +12,26 @@ RANK_SEG, RANK_MET = "tail", "ndcg@5"
 NORM_ORDER = ["minmax", "minmaxinv", "max", "sum", "zmuv", "rank", "borda"]
 BASE = ("combmnz", "zmuv")
 
+def ckpt_of(path):
+    """Caminho do checkpoint long-format (.ckpt.csv) correspondente ao CSV final."""
+    base,ext=os.path.splitext(path); return f"{base}.ckpt{ext or '.csv'}"
+
 def load(path):
+    """Lê o CSV final (com header method,norm,segment,metric,mean,std) OU o checkpoint
+    long-format (MESMAS 6 colunas, na mesma ordem, SEM header). Fareja pela 1ª célula."""
     cells = defaultdict(dict)  # (method,norm) -> {(seg,met):(mean,std)}
     M,N,S,K = set(),set(),set(),set()
     n=0
     with open(path) as fh:
-        for r in csv.DictReader(fh):
-            cells[(r["method"],r["norm"])][(r["segment"],r["metric"])]=(float(r["mean"]),float(r["std"]))
-            M.add(r["method"]); N.add(r["norm"]); S.add(r["segment"]); K.add(r["metric"]); n+=1
+        has_header = fh.readline().split(",",1)[0].strip()=="method"; fh.seek(0)
+        if has_header:
+            rows=((r["method"],r["norm"],r["segment"],r["metric"],r["mean"],r["std"])
+                  for r in csv.DictReader(fh))
+        else:  # checkpoint posicional: method,norm,seg,metric,mean,std
+            rows=(r for r in csv.reader(fh) if len(r)==6)
+        for m,nm,seg,met,mean,std in rows:
+            cells[(m,nm)][(seg,met)]=(float(mean),float(std))
+            M.add(m); N.add(nm); S.add(seg); K.add(met); n+=1
     return cells,M,N,S,K,n
 
 def norms_sorted(N):
@@ -27,7 +39,13 @@ def norms_sorted(N):
 
 for name,path,foldnote in DATASETS:
     print("="*70); print(f"# {name}  ({path})")
-    if not os.path.exists(path): print("  AUSENTE"); continue
+    if not os.path.exists(path):
+        ck=ckpt_of(path)
+        if os.path.exists(ck):                # CSV final ausente → lê o checkpoint parcial
+            path=ck; foldnote+="; partial (from checkpoint)"
+            print(f"  CSV final ausente — lendo checkpoint parcial: {ck}")
+        else:
+            print("  AUSENTE"); continue
     cells,M,N,S,K,n = load(path)
     bpath=os.path.join(os.path.dirname(path),"baselines.csv")     # sparse/dense isolados (eval_significance)
     base_cells=load(bpath)[0] if os.path.exists(bpath) else {}
