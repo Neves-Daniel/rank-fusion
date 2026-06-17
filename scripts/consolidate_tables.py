@@ -6,7 +6,9 @@ from collections import defaultdict
 DATASETS = [
     ("Eurlex-4K", "data/eurlex4k/results/gridsearch.csv", "5-fold CV, full fold"),
     ("Wiki10-31K", "data/wiki10-31k/results/gridsearch.csv", "5-fold CV, full fold"),
-    ("AmazonCat-13K", "data/amazoncat-13k/results/gridsearch.csv", "20K-query sample, folds 0/1/2"),
+    # AmazonCat tem 2 runs em paralelo: amostrado (grade completa + PSP) e full-fold (números finais).
+    ("AmazonCat-13K", "data/amazoncat-13k/results/gridsearch_sample.csv", "20K-query sample, folds 0/1/2, with PSP"),
+    ("AmazonCat-13K (full-fold)", "data/amazoncat-13k/results/gridsearch.csv", "full fold, folds 0/1/2"),
 ]
 RANK_SEG, RANK_MET = "tail", "ndcg@5"
 NORM_ORDER = ["minmax", "minmaxinv", "max", "sum", "zmuv", "rank", "borda"]
@@ -78,7 +80,7 @@ for name,path,foldnote in DATASETS:
     # ---- LaTeX: matriz fusão×norm de tail ndcg@5 ----
     No=norms_sorted(N); methods_by_rank=[m for (m,nm),_ in rk]  # ordem por aparição no ranking
     seen=set(); Mo=[m for m in methods_by_rank if not (m in seen or seen.add(m))]
-    tag=name.lower().replace("-","").replace(" ","")
+    tag="".join(ch for ch in name.lower() if ch.isalnum())  # só alfanumérico (label LaTeX seguro)
     print(f"\n  --- LATEX matriz tail nDCG@5 ({name}) ---")
     print("\\begin{table*}[t]\\centering")
     print(f"\\caption{{{name}: tail nDCG@5 for all fusion$\\times$normalization combinations "

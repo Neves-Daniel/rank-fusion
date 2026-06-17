@@ -499,6 +499,10 @@ def main(cfg: GridConfig | None = None) -> None:
     parser.add_argument("--psp", action="store_true",
                         help="adiciona PSP@k/PSnDCG@k (propensão Jain et al. 2016 via xclib) "
                              "às métricas da grade. Exige xclib instalado (presente na Brev)")
+    parser.add_argument("--out", type=str, default=None,
+                        help="caminho do CSV de saída (default: data/<dataset>/results/gridsearch.csv). "
+                             "O checkpoint .ckpt.csv é derivado dele. Use p/ rodar um grid em PARALELO "
+                             "(ex.: amostrado+--psp) sem colidir com outro run no mesmo dataset")
     args, _ = parser.parse_known_args()
 
     cfg = cfg or GridConfig()
@@ -523,6 +527,8 @@ def main(cfg: GridConfig | None = None) -> None:
         cfg.eval_sample = args.eval_sample
     if args.psp:
         cfg.kinds = tuple(cfg.kinds) + ("psp", "psndcg")
+    if args.out:
+        cfg.out_csv = args.out
     if args.skip_methods:
         skip = {m.strip() for m in args.skip_methods.split(",") if m.strip()}
         unknown = skip - set(cfg.methods)
