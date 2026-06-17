@@ -39,13 +39,22 @@ def norms_sorted(N):
 
 for name,path,foldnote in DATASETS:
     print("="*70); print(f"# {name}  ({path})")
-    if not os.path.exists(path):
-        ck=ckpt_of(path)
-        if os.path.exists(ck):                # CSV final ausente → lê o checkpoint parcial
-            path=ck; foldnote+="; partial (from checkpoint)"
-            print(f"  CSV final ausente — lendo checkpoint parcial: {ck}")
+    # Escolhe a fonte mais recente: o checkpoint só sobrevive enquanto um run está em
+    # andamento (é removido ao gravar o CSV final). Se o checkpoint existe E é mais novo
+    # que o CSV final, ele é o run atual → preferi-lo (evita um CSV antigo "sombrear" um
+    # checkpoint novo, ex.: rodada com --psp por cima de uma sem PSP).
+    ck=ckpt_of(path)
+    ck_ok=os.path.exists(ck); fin_ok=os.path.exists(path)
+    if ck_ok and (not fin_ok or os.path.getmtime(ck)>os.path.getmtime(path)):
+        if fin_ok:
+            print(f"  checkpoint MAIS NOVO que o CSV final — usando o checkpoint (run em andamento): {ck}")
         else:
-            print("  AUSENTE"); continue
+            print(f"  CSV final ausente — usando checkpoint: {ck}")
+        path=ck; foldnote+="; partial (from checkpoint)"
+    elif not fin_ok:
+        print("  AUSENTE"); continue
+    else:
+        print(f"  usando CSV final: {path}")
     cells,M,N,S,K,n = load(path)
     bpath=os.path.join(os.path.dirname(path),"baselines.csv")     # sparse/dense isolados (eval_significance)
     base_cells=load(bpath)[0] if os.path.exists(bpath) else {}
