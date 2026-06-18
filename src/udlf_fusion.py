@@ -274,6 +274,16 @@ def _run_udlf_batch(rk_paths: list[str], lists_path: str, n: int, block_size: in
 
     L = `block_size` (tamanho uniforme do bloco; o binário exige L ≤ N e linhas de
     comprimento L). K (kNN) é limitado a block_size-1."""
+    # pyUDLF/utils/outputType.py faz `from turtle import shape` (import equivocado, nunca
+    # usado na fusão) — turtle puxa tkinter→libX11, ausente em container headless. Stub
+    # do turtle ANTES de importar o pyUDLF evita a dependência de GUI por completo.
+    import sys as _sys
+    import types as _types
+    if "turtle" not in _sys.modules:
+        _stub = _types.ModuleType("turtle")
+        _stub.shape = lambda *a, **k: None        # satisfaz `from turtle import shape`
+        _stub.__getattr__ = lambda name: (lambda *a, **k: None)  # qualquer outro símbolo
+        _sys.modules["turtle"] = _stub
     from pyUDLF import run_calls as udlf
     from pyUDLF.utils import inputType
 
