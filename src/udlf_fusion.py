@@ -78,6 +78,7 @@ class UdlfConfig:
     t_override: int = 0                  # T (iterações); 0 = default oficial do método (todos 2)
     n_folds: int = 5
     folds: tuple[int, ...] | None = None
+    eval_sample: int = 0                  # subamostra N consultas/fold (seed) p/ escala; 0 = fold inteiro
     seed: int = 42
     binary_path: str | None = None       # caminho do binário UDLF (None = pyUDLF baixa)
     tag: str = "udlf"
@@ -337,6 +338,9 @@ def run_fold(fold, sparse: dict, dense: dict, udl_run: dict, Ytr, cfg: UdlfConfi
         qids = sorted(set(sparse) & set(dense), key=int)
     else:
         qids = sorted(set(udl_run), key=int)
+    if cfg.eval_sample and len(qids) > cfg.eval_sample:   # subamostra determinística (mesma seed da grade ranx)
+        import random
+        qids = random.Random(cfg.seed).sample(qids, cfg.eval_sample)
     # agrupa queries de tamanho de bloco parecido por lote → minimiza fillers (padding)
     qids.sort(key=lambda q: len(block_candidates(sparse.get(q, {}), dense.get(q, {}),
                                                  cfg.n_candidates)))
