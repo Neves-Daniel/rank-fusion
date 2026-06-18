@@ -193,7 +193,7 @@ def main():
 
         # descobre o topo por tail ndcg@5 a partir do CSV
         import csv
-        csvp = os.path.join(cfg.runs_dir.replace("runs", "results"), "gridsearch.csv")
+        csvp = os.path.join(cfg.runs_dir.replace("runs", "results"), cli.grid_csv)
         top = None
         if os.path.exists(csvp):
             best = {}
